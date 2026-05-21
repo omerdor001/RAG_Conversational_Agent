@@ -1,0 +1,13 @@
+{
+  "functions": {
+    "src/app/api/ingest/route.ts": {
+      "maxDuration": 60
+    },
+    "src/app/api/chat/route.ts": {
+      "maxDuration": 60
+    },
+    "src/app/api/seed/route.ts": {
+      "maxDuration": 60
+    }
+  }
+}
