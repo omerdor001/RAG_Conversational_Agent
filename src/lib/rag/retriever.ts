@@ -1,6 +1,6 @@
 import { createClient } from '@supabase/supabase-js'
 import { getEmbedding } from '@/lib/llm/provider'
-import type { MatchedChunk, Citation, Recommendation } from '@/lib/types'
+import type { MatchedChunk, Citation, Recommendation, SourceType } from '@/lib/types'
 
 // Service-role client used only server-side for vector operations
 // RLS still enforced because match_chunks() filters by user_id explicitly
@@ -22,6 +22,23 @@ export async function retrieveChunks(
   const embedding = precomputedEmbedding ?? await getEmbedding(query)
   const supabase = getSupabaseAdmin()
 
+  // Prefer hybrid search (vector + keyword) — catches exact-phrase matches the vector alone misses.
+  // Falls back to pure vector search if the migration hasn't been applied yet.
+  const { data: hybridData, error: hybridError } = await supabase.rpc('hybrid_search', {
+    query_text: query,
+    query_embedding: embedding,
+    match_user_id: userId,
+    match_threshold: threshold,
+    match_count: topK,
+  })
+
+  if (!hybridError && hybridData) return hybridData as MatchedChunk[]
+
+  if (hybridError && hybridError.code !== '42883') {
+    // 42883 = undefined_function (migration not run yet) — all other errors are real
+    console.error('hybrid_search error:', hybridError.message)
+  }
+
   const { data, error } = await supabase.rpc('match_chunks', {
     query_embedding: embedding,
     match_user_id: userId,
@@ -31,6 +48,54 @@ export async function retrieveChunks(
 
   if (error) throw new Error(`Retrieval error: ${error.message}`)
   return (data || []) as MatchedChunk[]
+}
+
+export async function retrieveChunksBySourceUrls(
+  urls: string[],
+  userId: string,
+  limit = 10
+): Promise<MatchedChunk[]> {
+  if (!urls.length) return []
+  const supabase = getSupabaseAdmin()
+
+  const { data: docs } = await supabase
+    .from('documents')
+    .select('id, title, source_type, source_url, file_type')
+    .eq('user_id', userId)
+    .eq('status', 'indexed')
+    .in('source_url', urls)
+
+  if (!docs?.length) return []
+
+  const docIds = docs.map(d => d.id)
+  const docMap = new Map(docs.map(d => [d.id, d]))
+
+  const { data: chunks } = await supabase
+    .from('chunks')
+    .select('id, document_id, content, chunk_index, token_count, metadata')
+    .eq('user_id', userId)
+    .in('document_id', docIds)
+    .order('chunk_index')
+    .limit(limit)
+
+  if (!chunks) return []
+
+  return chunks.map(c => {
+    const doc = docMap.get(c.document_id)!
+    return {
+      id: c.id,
+      document_id: c.document_id,
+      content: c.content,
+      chunk_index: c.chunk_index,
+      token_count: c.token_count,
+      metadata: c.metadata,
+      similarity: 1.0,
+      doc_title: doc.title,
+      doc_source_type: doc.source_type as SourceType,
+      doc_source_url: doc.source_url,
+      doc_file_type: doc.file_type,
+    }
+  })
 }
 
 export async function retrieveRecommendations(
@@ -73,13 +138,22 @@ export async function retrieveRecommendations(
   return recs
 }
 
+// ~6000 chars ≈ 1500 tokens — enough for 4 dense chunks while leaving room for
+// the system prompt, grounding rules, and a 512-token response within a 4K context.
+const MAX_CONTEXT_CHARS = 6000
+
 export function chunksToContext(chunks: MatchedChunk[]): string {
-  return chunks
-    .map((c, i) => {
-      const urlLine = c.doc_source_url ? `\nURL: ${c.doc_source_url}` : ''
-      return `[${i + 1}] "${c.doc_title}"${urlLine}\n${c.content}`
-    })
-    .join('\n\n---\n\n')
+  let total = 0
+  const parts: string[] = []
+  for (let i = 0; i < chunks.length; i++) {
+    const c = chunks[i]
+    const urlLine = c.doc_source_url ? `\nURL: ${c.doc_source_url}` : ''
+    const block = `[${i + 1}] "${c.doc_title}"${urlLine}\n${c.content}`
+    if (total + block.length > MAX_CONTEXT_CHARS) break
+    parts.push(block)
+    total += block.length
+  }
+  return parts.join('\n\n---\n\n')
 }
 
 export function chunksToCitations(chunks: MatchedChunk[]): Citation[] {

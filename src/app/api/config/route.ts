@@ -35,17 +35,24 @@ export async function PATCH(req: Request) {
   if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
 
   const body = await req.json()
-  const allowed = ['system_prompt', 'temperature', 'top_k', 'similarity_threshold', 'display_name']
+  const allowed = [
+    'system_prompt', 'temperature', 'top_k', 'similarity_threshold', 'display_name',
+    'role', 'llm_model', 'agent_persona', 'llm_provider', 'max_tokens',
+    'enable_citations', 'enable_streaming',
+  ]
   const updates: Record<string, unknown> = {}
 
   for (const key of allowed) {
     if (key in body) updates[key] = body[key]
   }
 
-  const { data, error } = await supabase
+  // Use service role so the upsert works even when the user profile row doesn't exist yet
+  // (profiles RLS has no INSERT policy — the trigger normally creates it at signup,
+  //  but older/test accounts may be missing the row). User identity is pinned to user.id.
+  const admin = await createServiceClient()
+  const { data, error } = await admin
     .from('profiles')
-    .update(updates)
-    .eq('id', user.id)
+    .upsert({ id: user.id, email: user.email!, ...updates }, { onConflict: 'id' })
     .select()
     .single()
 

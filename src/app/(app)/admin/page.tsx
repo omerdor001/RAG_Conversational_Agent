@@ -5,10 +5,10 @@ import { useRouter } from 'next/navigation'
 import { createClient } from '@/lib/supabase/client'
 import { UploadForm } from '@/components/admin/UploadForm'
 import { DocumentTable } from '@/components/admin/DocumentTable'
-import { ConfigPanel } from '@/components/admin/ConfigPanel'
+import { AgentConfigPanel } from '@/components/admin/AgentConfigPanel'
 import { Button } from '@/components/ui/button'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
-import { Bot, ArrowLeft, Database, Settings, Upload, RefreshCw, Loader2 } from 'lucide-react'
+import { Bot, ArrowLeft, Database, Settings, Upload, RefreshCw, Loader2, MonitorSmartphone } from 'lucide-react'
 import type { Document, Profile } from '@/lib/types'
 
 export default function AdminPage() {
@@ -72,10 +72,16 @@ export default function AdminPage() {
               {profile?.email && <p className="text-xs text-slate-500">{profile.email}</p>}
             </div>
           </div>
-          <Button variant="ghost" size="sm" onClick={() => router.push('/chat')} className="text-slate-400 hover:text-white gap-1.5">
-            <ArrowLeft className="w-4 h-4" />
-            Back to chat
-          </Button>
+          <div className="flex items-center gap-2">
+            <Button variant="ghost" size="sm" onClick={() => router.push('/embed-demo')} className="text-slate-400 hover:text-white gap-1.5">
+              <MonitorSmartphone className="w-4 h-4" />
+              Widget Demo
+            </Button>
+            <Button variant="ghost" size="sm" onClick={() => router.push('/chat')} className="text-slate-400 hover:text-white gap-1.5">
+              <ArrowLeft className="w-4 h-4" />
+              Back to chat
+            </Button>
+          </div>
         </div>
       </header>
 
@@ -139,7 +145,7 @@ export default function AdminPage() {
             <TabsContent value="config" className="mt-4">
               <div className="max-w-2xl">
                 <h2 className="text-sm font-medium text-slate-300 mb-4">Agent configuration</h2>
-                {profile && <ConfigPanel profile={profile} onUpdate={setProfile} />}
+                <AgentConfigPanel />
               </div>
             </TabsContent>
           </Tabs>

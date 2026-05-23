@@ -200,6 +200,9 @@ async function ensureSchema(): Promise<void> {
       console.error('     supabase/migrations/004_resize_embeddings.sql')
       console.error('     supabase/migrations/005_fix_thresholds.sql')
       console.error('     supabase/migrations/006_hnsw_index.sql')
+      console.error('     supabase/migrations/007_keyword_search.sql')
+      console.error('     supabase/migrations/008_agent_config.sql')
+      console.error('     supabase/migrations/009_profile_role.sql')
       process.exit(1)
     }
     console.log('  Applying database migrations...')
@@ -211,6 +214,9 @@ async function ensureSchema(): Promise<void> {
         '004_resize_embeddings.sql',
         '005_fix_thresholds.sql',
         '006_hnsw_index.sql',
+        '007_keyword_search.sql',
+        '008_agent_config.sql',
+        '009_profile_role.sql',
       ])
       console.log('  ✓ Schema ready')
     } catch (err) {
@@ -224,18 +230,19 @@ async function ensureSchema(): Promise<void> {
   // Tables exist — check if embedding column matches nomic-embed-text's 768-dim output
   const dim = await getEmbeddingDimension()
   if (dim !== null && dim !== 768) {
-    console.log(`  ⚠ Embedding column is ${dim}-dim but nomic-embed-text produces 768-dim. Applying migrations 004-006...`)
+    console.log(`  ⚠ Embedding column is ${dim}-dim but nomic-embed-text produces 768-dim. Applying migrations 004-007...`)
     if (!DATABASE_URL) {
       console.error('\n❌ DATABASE_URL is required to auto-apply migrations.')
       console.error('   Run these SQL files in Supabase Dashboard → SQL Editor:')
       console.error('     supabase/migrations/004_resize_embeddings.sql')
       console.error('     supabase/migrations/005_fix_thresholds.sql')
       console.error('     supabase/migrations/006_hnsw_index.sql')
+      console.error('     supabase/migrations/007_keyword_search.sql')
       console.error('\n   WARNING: Migration 004 drops and recreates the embedding column — existing chunks will be deleted.')
       process.exit(1)
     }
     try {
-      await applyMigrations(['004_resize_embeddings.sql', '005_fix_thresholds.sql', '006_hnsw_index.sql'])
+      await applyMigrations(['004_resize_embeddings.sql', '005_fix_thresholds.sql', '006_hnsw_index.sql', '007_keyword_search.sql', '008_agent_config.sql', '009_profile_role.sql'])
       console.log('  ✓ Embedding column resized to 768-dim and index rebuilt')
     } catch (err) {
       console.error(`  ✗ Migration failed: ${err instanceof Error ? err.message : err}`)
@@ -245,8 +252,8 @@ async function ensureSchema(): Promise<void> {
     // Dimension is correct — still apply threshold/index fixes if DATABASE_URL is available
     if (DATABASE_URL) {
       try {
-        await applyMigrations(['005_fix_thresholds.sql', '006_hnsw_index.sql'])
-        console.log('  ✓ Schema ready (thresholds and index updated)')
+        await applyMigrations(['005_fix_thresholds.sql', '006_hnsw_index.sql', '007_keyword_search.sql', '008_agent_config.sql', '009_profile_role.sql'])
+        console.log('  ✓ Schema ready (thresholds, index, keyword search, agent config, and profile role updated)')
       } catch {
         // Idempotent migrations — ignore errors (e.g. index already exists)
         console.log('  ✓ Schema ready')

@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from 'react'
 import { toast } from 'sonner'
-import { Send, Plus, Square } from 'lucide-react'
+import { Send, Plus, Square, Bot } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Textarea } from '@/components/ui/textarea'
 import { MessageItem } from './MessageItem'
@@ -23,9 +23,10 @@ function genId() { return `msg_${++msgCounter}_${Date.now()}` }
 interface ChatInterfaceProps {
   userId: string
   userEmail: string
+  isEmbedded?: boolean
 }
 
-export function ChatInterface({ userId, userEmail }: ChatInterfaceProps) {
+export function ChatInterface({ userId, userEmail, isEmbedded = false }: ChatInterfaceProps) {
   const [conversations, setConversations] = useState<Conversation[]>([])
   const [activeConversationId, setActiveConversationId] = useState<string | null>(null)
   const [messages, setMessages] = useState<ChatMessage[]>([])
@@ -94,6 +95,8 @@ export function ChatInterface({ userId, userEmail }: ChatInterfaceProps) {
         signal: ctrl.signal,
       })
 
+      console.log('[ChatInterface] fetch response status:', res.status, '| content-type:', res.headers.get('content-type'))
+
       if (!res.ok) {
         const text = await res.text().catch(() => '')
         throw new Error(text || `HTTP ${res.status}`)
@@ -103,23 +106,48 @@ export function ChatInterface({ userId, userEmail }: ChatInterfaceProps) {
         const cits = JSON.parse(decodeURIComponent(res.headers.get('X-Citations') || '[]')) as Citation[]
         const recs = JSON.parse(decodeURIComponent(res.headers.get('X-Recommendations') || '[]')) as Recommendation[]
         const oos = res.headers.get('X-Out-Of-Scope') === 'true'
+        console.log('[ChatInterface] headers — citations:', cits.length, '| recs:', recs.length, '| oos:', oos)
         setCitationsMap(prev => ({ ...prev, [assistantId]: cits }))
         setRecommendationsMap(prev => ({ ...prev, [assistantId]: recs }))
         if (oos) setOutOfScopeMap(prev => ({ ...prev, [assistantId]: true }))
-      } catch {}
+      } catch (e) { console.warn('[ChatInterface] header parse error:', e) }
 
       const reader = res.body!.getReader()
       const decoder = new TextDecoder()
       let fullText = ''
+      let chunkCount = 0
 
       while (true) {
         const { done, value } = await reader.read()
         if (done) break
-        fullText += decoder.decode(value, { stream: true })
+        const chunk = decoder.decode(value, { stream: true })
+        chunkCount++
+        if (chunkCount <= 3) console.log(`[ChatInterface] chunk #${chunkCount}:`, JSON.stringify(chunk.slice(0, 60)))
+        fullText += chunk
         const snapshot = fullText
         setMessages(prev =>
           prev.map(m => m.id === assistantId ? { ...m, content: snapshot } : m)
         )
+      }
+
+      console.log('[ChatInterface] stream done — total chunks:', chunkCount, '| text length:', fullText.length)
+
+      // If the LLM self-reported out-of-scope (chunks were retrieved but didn't answer the question),
+      // drop the spurious citations that were computed before streaming started.
+      const outOfScopePhrases = [
+        '💡 Not in your knowledge base',
+        '💡 This answer is from my general knowledge',
+        "I don't have real-time",
+        "I don't have access to real-time",
+        'I cannot access real-time',
+        "I'm a large language model",
+        "As a large language model",
+        'not in the knowledge base',
+        'not in your knowledge base',
+      ]
+      if (outOfScopePhrases.some(phrase => fullText.toLowerCase().includes(phrase.toLowerCase()))) {
+        setCitationsMap(prev => ({ ...prev, [assistantId]: [] }))
+        setOutOfScopeMap(prev => ({ ...prev, [assistantId]: true }))
       }
 
       await fetchConversations()
@@ -303,37 +331,55 @@ export function ChatInterface({ userId, userEmail }: ChatInterfaceProps) {
 
   return (
     <div className="flex h-screen bg-slate-950">
-      <ChatSidebar
-        conversations={conversations}
-        activeId={activeConversationId}
-        open={sidebarOpen}
-        onToggle={() => setSidebarOpen(v => !v)}
-        onSelect={loadConversation}
-        onNew={startNewChat}
-        onDelete={deleteConversation}
-        userEmail={userEmail}
-      />
+      {!isEmbedded && (
+        <ChatSidebar
+          conversations={conversations}
+          activeId={activeConversationId}
+          open={sidebarOpen}
+          onToggle={() => setSidebarOpen(v => !v)}
+          onSelect={loadConversation}
+          onNew={startNewChat}
+          onDelete={deleteConversation}
+          userEmail={userEmail}
+        />
+      )}
 
       <div className="flex flex-col flex-1 min-w-0">
         {/* Top bar */}
         <div className="flex items-center gap-3 px-4 py-3 border-b border-slate-800 bg-slate-900">
-          {!sidebarOpen && (
-            <Button variant="ghost" size="icon" onClick={() => setSidebarOpen(true)} className="text-slate-400 hover:text-white w-8 h-8">
-              <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
-                <path d="M2 4h12M2 8h12M2 12h12" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/>
-              </svg>
-            </Button>
+          {isEmbedded ? (
+            <>
+              <div className="w-6 h-6 rounded-md bg-indigo-500/20 flex items-center justify-center flex-shrink-0">
+                <Bot className="w-3.5 h-3.5 text-indigo-400" />
+              </div>
+              <span className="text-sm font-medium text-slate-300">AI Assistant</span>
+              <div className="ml-auto">
+                <Button variant="ghost" size="sm" onClick={startNewChat} className="text-slate-400 hover:text-white gap-1.5">
+                  <Plus className="w-4 h-4" />New
+                </Button>
+              </div>
+            </>
+          ) : (
+            <>
+              {!sidebarOpen && (
+                <Button variant="ghost" size="icon" onClick={() => setSidebarOpen(true)} className="text-slate-400 hover:text-white w-8 h-8">
+                  <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
+                    <path d="M2 4h12M2 8h12M2 12h12" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"/>
+                  </svg>
+                </Button>
+              )}
+              <h2 className="text-sm font-medium text-slate-300 truncate">
+                {activeConversationId
+                  ? conversations.find(c => c.id === activeConversationId)?.title || 'Conversation'
+                  : 'New Conversation'}
+              </h2>
+              <div className="ml-auto">
+                <Button variant="ghost" size="sm" onClick={startNewChat} className="text-slate-400 hover:text-white gap-1.5">
+                  <Plus className="w-4 h-4" />New
+                </Button>
+              </div>
+            </>
           )}
-          <h2 className="text-sm font-medium text-slate-300 truncate">
-            {activeConversationId
-              ? conversations.find(c => c.id === activeConversationId)?.title || 'Conversation'
-              : 'New Conversation'}
-          </h2>
-          <div className="ml-auto">
-            <Button variant="ghost" size="sm" onClick={startNewChat} className="text-slate-400 hover:text-white gap-1.5">
-              <Plus className="w-4 h-4" />New
-            </Button>
-          </div>
         </div>
 
         {/* Messages */}

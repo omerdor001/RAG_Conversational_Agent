@@ -7,6 +7,10 @@ services:
       - "11434:11434"
     environment:
       OLLAMA_NUM_PARALLEL: 2
+      # Keep models loaded indefinitely (default 5 min causes cold-start on every new chat)
+      OLLAMA_KEEP_ALIVE: -1
+      # Use all available CPU threads for inference
+      OLLAMA_NUM_THREAD: 0
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "ollama", "list"]

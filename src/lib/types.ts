@@ -6,11 +6,17 @@ export interface Profile {
   id: string
   email: string
   display_name: string | null
+  role: string | null
   system_prompt: string
   temperature: number
   top_k: number
   similarity_threshold: number
   llm_model: string
+  agent_persona: string
+  llm_provider: string
+  max_tokens: number
+  enable_citations: boolean
+  enable_streaming: boolean
   created_at: string
   updated_at: string
 }
