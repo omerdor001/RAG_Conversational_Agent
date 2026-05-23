@@ -6,53 +6,67 @@ A production-ready, multi-tenant Retrieval-Augmented Generation (RAG) system bui
 
 ---
 
-## Quick Start (< 5 minutes)
+## Quick Start — Docker (Recommended)
+
+The fastest way to run the full stack. Ollama, model pulls, and demo account seeding all happen automatically.
+
+**Prerequisites:** Docker Desktop running, a Supabase project with migrations applied (see [Database Setup](#database-setup)).
 
 ```bash
 git clone <your-repo-url>
-cd rag-agent
-cp .env.example .env.local
-# Fill in your Supabase and LLM credentials (see below)
-npm install
-npm run db:migrate     # Apply schema + RLS policies to Supabase
-npm run seed           # Creates demo accounts + indexes ~100k tokens of content
-npm run dev
-# Navigate to http://localhost:3000
+cd RAG_Agent_System      # the repo root — docker-compose.yml lives here
+
+cp .env.example .env
+# Open .env and fill in three values:
+#   NEXT_PUBLIC_SUPABASE_URL
+#   NEXT_PUBLIC_SUPABASE_ANON_KEY
+#   SUPABASE_SERVICE_ROLE_KEY
+
+docker compose up
+# → Pulls ollama/ollama image, builds the Next.js image
+# → On first run: downloads llama3.2:3b (~2GB) and all-minilm (~100MB)
+# → Seeds demo accounts in the background (watch with: docker compose logs -f app)
+# → App is live at http://localhost:3000
 ```
+
+> **Model downloads happen once.** Ollama stores models in a named Docker volume (`ollama_data`) that persists across restarts. Subsequent `docker compose up` commands start in seconds.
 
 ### Demo Credentials
 
 | Account | Email | Password | Domain |
 |---------|-------|----------|--------|
-| Culinary Arts | `chef@demo.com` | `demo123456` | Professional cooking techniques, food science, culinary history |
+| AI Agents Student | `student@demo.com` | `demo123456` | LangChain, LangGraph, LlamaIndex, CrewAI, agentic AI |
 | Personal Finance | `investor@demo.com` | `demo123456` | FIRE movement, investing, budgeting, tax strategy |
 
 ---
 
 ## Environment Variables
 
-Copy `.env.example` to `.env.local` and fill in:
+**Docker users:** copy `RAG_Agent_System/.env.example` → `RAG_Agent_System/.env`. `OLLAMA_BASE_URL` is set automatically by docker-compose — do not override it.
+
+**Manual setup users:** copy `rag-agent/.env.example` → `rag-agent/.env.local`.
 
 ```bash
-# Supabase (required)
+# Supabase (required — get from supabase.com → project settings → API)
 NEXT_PUBLIC_SUPABASE_URL=https://your-project.supabase.co
 NEXT_PUBLIC_SUPABASE_ANON_KEY=eyJ...
-SUPABASE_SERVICE_ROLE_KEY=eyJ...   # Admin key for seed script only
+SUPABASE_SERVICE_ROLE_KEY=eyJ...   # Server-only admin key for seeding
 
-# LLM Provider (choose one)
-LLM_PROVIDER=ollama                # "ollama" for local | "openai" for production
+# LLM Provider
+LLM_PROVIDER=ollama                # "ollama" (default, free) | "openai" (cloud)
 
-# Ollama (if LLM_PROVIDER=ollama)
+# Ollama — set automatically in Docker (http://ollama:11434)
+# Override only for manual local setup
 OLLAMA_BASE_URL=http://localhost:11434
-OLLAMA_MODEL=llama3.2              # or mistral, phi3, etc.
-OLLAMA_EMBEDDING_MODEL=nomic-embed-text
+OLLAMA_LLM_MODEL=llama3.2:3b
+OLLAMA_EMBED_MODEL=all-minilm
 
-# OpenAI (if LLM_PROVIDER=openai)
+# OpenAI — only needed when LLM_PROVIDER=openai
 OPENAI_API_KEY=sk-...
-OPENAI_MODEL=gpt-4o-mini
-OPENAI_EMBEDDING_MODEL=text-embedding-3-small
+OPENAI_LLM_MODEL=gpt-4o-mini
+OPENAI_EMBED_MODEL=text-embedding-3-small
 
-# Seed script secret (optional, protects /api/seed endpoint)
+# Seed endpoint protection (any random string)
 SEED_SECRET=your-secret-here
 ```
 
@@ -319,102 +333,144 @@ Supports 4 source types:
 
 ## Setup Instructions
 
-### Prerequisites
-
-- Node.js 18+
-- Supabase account (free tier works)
-- Ollama installed locally OR OpenAI API key
-
-### With Ollama (Free, Local)
-
-```bash
-# Install Ollama from https://ollama.ai
-ollama pull llama3.2          # Chat model
-ollama pull nomic-embed-text  # Embedding model
-ollama pull llava              # Optional: image description
-```
-
-### Without Ollama (OpenAI)
-
-Set `LLM_PROVIDER=openai` and provide `OPENAI_API_KEY` in `.env.local`. No other changes needed.
-
 ### Database Setup
 
-1. Create a new Supabase project at [supabase.com](https://supabase.com)
-2. Enable the `pgvector` extension in Supabase Dashboard → Database → Extensions
-3. Run migrations:
+Required for both Docker and manual setups. Supabase is an external managed service.
+
+1. Create a free project at [supabase.com](https://supabase.com)
+2. Enable the `pgvector` extension: Dashboard → Database → Extensions → search "vector" → enable
+3. Apply the three migrations **in order**:
 
 ```bash
-# Option A: Supabase CLI
+# Option A: Supabase CLI (from the rag-agent/ directory)
 supabase db push
 
-# Option B: Manual — paste each file into Supabase SQL Editor
+# Option B: Manual — paste each file into Supabase Dashboard → SQL Editor
 # supabase/migrations/001_initial_schema.sql
 # supabase/migrations/002_rls_policies.sql
 # supabase/migrations/003_functions.sql
 ```
 
-### Seed Demo Accounts
+4. Copy your project credentials into `.env` (or `.env.local` for manual setup):
+   - Project URL and anon key: Dashboard → Settings → API
+   - Service role key: Dashboard → Settings → API → Service role (keep secret)
 
+---
+
+### Option A: Docker (Recommended)
+
+No local Node.js or Ollama installation needed.
+
+```bash
+# From the repo root (RAG_Agent_System/)
+cp .env.example .env
+# Fill in: NEXT_PUBLIC_SUPABASE_URL, NEXT_PUBLIC_SUPABASE_ANON_KEY, SUPABASE_SERVICE_ROLE_KEY
+
+docker compose up
+```
+
+What happens on first run:
+- Ollama service starts and passes a health check
+- `llama3.2:3b` (~2 GB) and `all-minilm` (~100 MB) are pulled automatically
+- Demo accounts are seeded in the background (safe to use the app while this runs)
+- App is live at **http://localhost:3000**
+
+Watch seed progress:
+```bash
+docker compose logs -f app   # lines prefixed [seed]
+```
+
+Stop everything:
+```bash
+docker compose down          # keeps ollama_data volume (models stay downloaded)
+docker compose down -v       # also removes the volume (re-downloads models next time)
+```
+
+---
+
+### Option B: Manual Setup
+
+For local development without Docker.
+
+**Prerequisites:** Node.js 18+, Ollama installed from [ollama.ai](https://ollama.ai) OR an OpenAI API key.
+
+```bash
+# Pull required Ollama models (skip if using OpenAI)
+ollama pull llama3.2:3b
+ollama pull all-minilm
+ollama pull llava:7b        # Optional: enables image ingestion
+
+# From the rag-agent/ directory
+cp .env.example .env.local
+# Fill in Supabase credentials + set OLLAMA_BASE_URL=http://localhost:11434
+
+npm install
+npm run dev                  # Development server at http://localhost:3000
+```
+
+**Seed demo accounts** (run once, after the dev server is up for embedding):
 ```bash
 npm run seed
 ```
 
 This script:
-- Creates `chef@demo.com` and `investor@demo.com` via Supabase Admin API
-- Reads 20 markdown documents per domain from `scripts/seed-data/`
-- Chunks, embeds, and indexes ~100k tokens of content
-- Is idempotent — safe to run multiple times
+- Creates `student@demo.com` (AI Agents) and `investor@demo.com` (Personal Finance) via Supabase Auth
+- Fetches and scrapes 45 curated URLs from official docs and research blogs
+- Chunks, embeds, and indexes ~60-80k tokens of real content per user
+- Is idempotent — reruns skip already-indexed URLs
 
-**Expected time:** 5-15 minutes depending on embedding speed (Ollama local vs OpenAI API)
+**Expected time:** 15-30 minutes (network + embedding speed dependent)
 
 ---
 
 ## Project Structure
 
 ```
-rag-agent/
-├── src/
-│   ├── app/
-│   │   ├── (app)/
-│   │   │   ├── chat/          # Chat interface
-│   │   │   └── admin/         # Admin panel
-│   │   ├── (auth)/
-│   │   │   └── login/         # Auth page
-│   │   └── api/
-│   │       ├── chat/          # Streaming RAG endpoint
-│   │       ├── ingest/        # Document ingestion
-│   │       └── seed/          # Demo account seeding
-│   ├── components/
-│   │   ├── chat/              # ChatInterface, MessageBubble, Citations
-│   │   ├── admin/             # UploadForm, DocumentList, ConfigPanel
-│   │   └── ui/                # shadcn/ui components
-│   ├── lib/
-│   │   ├── llm/
-│   │   │   └── provider.ts    # LLM abstraction (Ollama/OpenAI)
-│   │   ├── rag/
-│   │   │   ├── chunker.ts     # Semantic boundary chunker
-│   │   │   └── retriever.ts   # Vector search + recommendations
-│   │   ├── ingest/
-│   │   │   ├── processor.ts   # Ingestion orchestrator
-│   │   │   ├── document-parser.ts  # PDF/DOCX/CSV parsing
-│   │   │   └── url-scraper.ts # Web scraping
-│   │   ├── supabase/
-│   │   │   ├── client.ts      # Browser client
-│   │   │   └── server.ts      # Server client
-│   │   └── types.ts           # Shared TypeScript interfaces
-│   └── proxy.ts               # Auth middleware (Next.js 16)
-├── supabase/
-│   └── migrations/
-│       ├── 001_initial_schema.sql
-│       ├── 002_rls_policies.sql
-│       └── 003_functions.sql
-├── scripts/
-│   ├── seed.ts                # Demo account seeder
-│   └── seed-data/
-│       ├── culinary/          # 20 culinary arts documents
-│       └── finance/           # 20 personal finance documents
-└── vercel.json                # Function timeout config
+RAG_Agent_System/               ← repo root
+├── docker-compose.yml          # Orchestrates app + ollama services
+├── .env.example                # Copy to .env — fill in Supabase credentials
+└── rag-agent/                  # Next.js application
+    ├── Dockerfile              # Multi-step: install → build → entrypoint
+    ├── docker/
+    │   └── entrypoint.sh       # Waits for Ollama, pulls models, seeds, starts app
+    ├── src/
+    │   ├── app/
+    │   │   ├── (app)/
+    │   │   │   ├── chat/       # Chat interface
+    │   │   │   └── admin/      # Admin panel
+    │   │   ├── (auth)/
+    │   │   │   └── login/      # Auth page
+    │   │   └── api/
+    │   │       ├── chat/       # Streaming RAG endpoint
+    │   │       ├── ingest/     # Document ingestion
+    │   │       └── seed/       # Seeding status check endpoint
+    │   ├── components/
+    │   │   ├── chat/           # ChatInterface, MessageItem, ChatSidebar
+    │   │   ├── admin/          # UploadForm, DocumentTable, ConfigPanel
+    │   │   └── ui/             # shadcn/ui components
+    │   ├── lib/
+    │   │   ├── llm/
+    │   │   │   └── provider.ts # LLM abstraction (Ollama/OpenAI)
+    │   │   ├── rag/
+    │   │   │   ├── chunker.ts  # Semantic boundary chunker
+    │   │   │   └── retriever.ts# Vector search + recommendations
+    │   │   ├── ingest/
+    │   │   │   ├── processor.ts        # Ingestion orchestrator
+    │   │   │   ├── document-parser.ts  # PDF/DOCX/CSV parsing
+    │   │   │   └── url-scraper.ts      # Web scraping (cheerio)
+    │   │   ├── supabase/
+    │   │   │   ├── client.ts   # Browser Supabase client
+    │   │   │   └── server.ts   # Server Supabase client
+    │   │   └── types.ts        # Shared TypeScript interfaces
+    │   └── proxy.ts            # Auth middleware
+    ├── supabase/
+    │   └── migrations/
+    │       ├── 001_initial_schema.sql  # Tables, indexes, triggers
+    │       ├── 002_rls_policies.sql    # Row-Level Security policies
+    │       └── 003_functions.sql       # match_chunks(), recommend_chunks()
+    ├── scripts/
+    │   └── seed.ts             # URL-based seeder: scrapes 45 docs, embeds, stores
+    └── vercel.json             # Function timeout config
 ```
 
 ---
@@ -479,4 +535,4 @@ rag-agent/
 
 ---
 
-*Built with Next.js 15, Supabase, Vercel AI SDK, shadcn/ui*
+*Built with Next.js 16, Supabase, Vercel AI SDK, shadcn/ui, Ollama*

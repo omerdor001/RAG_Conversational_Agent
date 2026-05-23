@@ -9,7 +9,7 @@ create table public.profiles (
   system_prompt text default 'You are a helpful assistant. Answer questions based only on the provided context. Always cite your sources.',
   temperature float default 0.7,
   top_k int default 7,
-  similarity_threshold float default 0.72,
+  similarity_threshold float default 0.3,
   llm_model text default 'llama3.2:3b',
   created_at timestamptz default now(),
   updated_at timestamptz default now()

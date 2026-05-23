@@ -12,9 +12,10 @@ interface MessageItemProps {
   citations: Citation[]
   recommendations: Recommendation[]
   isStreaming: boolean
+  isOutOfScope: boolean
 }
 
-export function MessageItem({ message, citations, recommendations, isStreaming }: MessageItemProps) {
+export function MessageItem({ message, citations, recommendations, isStreaming, isOutOfScope }: MessageItemProps) {
   const [showCitations, setShowCitations] = useState(false)
 
   const isAssistant = message.role === 'assistant'
@@ -51,6 +52,19 @@ export function MessageItem({ message, citations, recommendations, isStreaming }
           )}
         </div>
 
+        {/* Out-of-scope / no-KB badge */}
+        {isAssistant && citations.length === 0 && !isStreaming && (
+          isOutOfScope ? (
+            <span className="text-xs text-amber-500/80 px-1">
+              💡 General knowledge · Add docs to improve KB coverage
+            </span>
+          ) : (
+            <span className="text-xs text-slate-500 italic px-1">
+              ⚠ No KB sources matched
+            </span>
+          )
+        )}
+
         {/* Citations toggle */}
         {isAssistant && citations.length > 0 && (
           <div className="w-full space-y-2">
@@ -65,8 +79,8 @@ export function MessageItem({ message, citations, recommendations, isStreaming }
             </Button>
             {showCitations && (
               <div className="space-y-2">
-                {citations.map((c, i) => (
-                  <CitationCard key={c.chunk_id} citation={c} index={i + 1} />
+                {citations.map((c) => (
+                  <CitationCard key={c.chunk_id} citation={c} />
                 ))}
               </div>
             )}
@@ -90,11 +104,32 @@ export function MessageItem({ message, citations, recommendations, isStreaming }
 }
 
 function FormattedContent({ content }: { content: string }) {
-  // Simple markdown-like rendering: bold, code, line breaks
-  const lines = content.split('\n')
+  // Split on citation tokens: [N](URL) or bare [N]
+  const parts = content.split(/(\[\d+\](?:\([^)]*\))?)/g)
   return (
-    <div className="space-y-1 whitespace-pre-wrap break-words">
-      {content}
+    <div className="whitespace-pre-wrap break-words leading-relaxed">
+      {parts.map((part, i) => {
+        const linked = part.match(/^\[(\d+)\]\(([^)]*)\)$/)
+        if (linked) {
+          return (
+            <a key={i} href={linked[2]} target="_blank" rel="noopener noreferrer"
+               className="inline-block no-underline align-baseline ml-0.5">
+              <sup className="text-indigo-400 hover:text-indigo-300 font-medium text-[10px] bg-indigo-500/15 px-1 py-0.5 rounded cursor-pointer">
+                [{linked[1]}]
+              </sup>
+            </a>
+          )
+        }
+        const bare = part.match(/^\[(\d+)\]$/)
+        if (bare) {
+          return (
+            <sup key={i} className="text-indigo-400 font-medium text-[10px] bg-indigo-500/15 px-1 py-0.5 rounded ml-0.5 align-baseline">
+              [{bare[1]}]
+            </sup>
+          )
+        }
+        return <span key={i}>{part}</span>
+      })}
     </div>
   )
 }
@@ -108,7 +143,7 @@ function SourceIcon({ type }: { type: string }) {
   }
 }
 
-function CitationCard({ citation, index }: { citation: Citation; index: number }) {
+function CitationCard({ citation }: { citation: Citation }) {
   const confidence = Math.round(citation.similarity * 100)
   const confidenceColor = confidence >= 85 ? 'text-green-400' : confidence >= 70 ? 'text-yellow-400' : 'text-orange-400'
 
@@ -116,7 +151,6 @@ function CitationCard({ citation, index }: { citation: Citation; index: number }
     <div className="rounded-lg border border-slate-700 bg-slate-800/50 p-3 space-y-2">
       <div className="flex items-center justify-between gap-2">
         <div className="flex items-center gap-1.5 text-xs text-slate-400 min-w-0">
-          <span className="flex-shrink-0 w-4 h-4 rounded-full bg-indigo-500/20 text-indigo-400 flex items-center justify-center text-[10px] font-bold">{index}</span>
           <SourceIcon type={citation.source_type} />
           <span className="truncate font-medium text-slate-300">{citation.document_title}</span>
         </div>

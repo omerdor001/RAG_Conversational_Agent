@@ -9,12 +9,14 @@ export function getLLMModel(modelOverride?: string) {
     return openai(modelOverride || process.env.OPENAI_LLM_MODEL || 'gpt-4o-mini')
   }
 
-  // Ollama via OpenAI-compatible API
+  // Ollama via OpenAI-compatible API.
+  // In @ai-sdk/openai v3 the default provider call routes to /v1/responses (Responses API)
+  // which Ollama does not implement. .chat() explicitly targets /v1/chat/completions.
   const ollama = createOpenAI({
     baseURL: `${process.env.OLLAMA_BASE_URL || 'http://localhost:11434'}/v1`,
     apiKey: 'ollama',
   })
-  return ollama(modelOverride || process.env.OLLAMA_LLM_MODEL || 'llama3.2:3b')
+  return ollama.chat(modelOverride || process.env.OLLAMA_LLM_MODEL || 'llama3.2:3b')
 }
 
 export async function getEmbedding(text: string): Promise<number[]> {
@@ -30,7 +32,7 @@ export async function getEmbedding(text: string): Promise<number[]> {
       body: JSON.stringify({
         model: process.env.OPENAI_EMBED_MODEL || 'text-embedding-3-small',
         input: cleanText,
-        dimensions: 384,
+        dimensions: 768,
       }),
     })
     if (!response.ok) throw new Error(`OpenAI embedding error: ${response.statusText}`)
@@ -38,14 +40,15 @@ export async function getEmbedding(text: string): Promise<number[]> {
     return data.data[0].embedding
   }
 
-  // Ollama embedding
+  // nomic-embed-text-v1.5 has n_ctx_train=2048; truncate at ~1800 tokens (~7200 chars) to avoid silent truncation
+  const truncated = cleanText.length > 7200 ? cleanText.slice(0, 7200) : cleanText
   const ollamaUrl = process.env.OLLAMA_BASE_URL || 'http://localhost:11434'
   const response = await fetch(`${ollamaUrl}/api/embeddings`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
-      model: process.env.OLLAMA_EMBED_MODEL || 'all-minilm',
-      prompt: cleanText,
+      model: process.env.OLLAMA_EMBED_MODEL || 'nomic-embed-text',
+      prompt: truncated,
     }),
   })
   if (!response.ok) throw new Error(`Ollama embedding error: ${response.statusText}`)
@@ -98,7 +101,10 @@ export async function getImageDescription(imageBase64: string, mimeType: string)
     }),
   })
   if (!response.ok) {
-    throw new Error(`Ollama vision error (is ${visionModel} installed? Run: ollama pull ${visionModel}): ${response.statusText}`)
+    if (response.status === 404) {
+      throw new Error(`Vision model "${visionModel}" is not installed. Fix: ollama pull ${visionModel}`)
+    }
+    throw new Error(`Ollama vision error: ${response.statusText}`)
   }
   const data = await response.json()
   return data.response

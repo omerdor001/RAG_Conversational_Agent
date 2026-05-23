@@ -22,7 +22,7 @@ export async function POST(req: NextRequest) {
     const { data } = await supabase.auth.admin.listUsers()
     const emails = data?.users?.map(u => u.email) || []
     return NextResponse.json({
-      chef_seeded: emails.includes('chef@demo.com'),
+      student_seeded: emails.includes('student@demo.com'),
       investor_seeded: emails.includes('investor@demo.com'),
     })
   }

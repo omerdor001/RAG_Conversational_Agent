@@ -1,4 +1,4 @@
-export type SourceType = 'document' | 'url' | 'image' | 'text'
+export type SourceType = 'document' | 'url' | 'text'
 export type DocumentStatus = 'pending' | 'indexing' | 'indexed' | 'failed'
 export type MessageRole = 'user' | 'assistant'
 

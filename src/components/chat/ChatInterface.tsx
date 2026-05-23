@@ -1,14 +1,15 @@
 'use client'
 
-import { useEffect, useRef, useState, useCallback } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { toast } from 'sonner'
-import { Send, Loader2, Plus, Square } from 'lucide-react'
+import { Send, Plus, Square } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Textarea } from '@/components/ui/textarea'
-import { ScrollArea } from '@/components/ui/scroll-area'
 import { MessageItem } from './MessageItem'
 import { ChatSidebar } from './ChatSidebar'
 import type { Conversation, Citation, Recommendation } from '@/lib/types'
+
+const MAX_MESSAGES_IN_UI = 50
 
 interface ChatMessage {
   id: string
@@ -30,19 +31,41 @@ export function ChatInterface({ userId, userEmail }: ChatInterfaceProps) {
   const [messages, setMessages] = useState<ChatMessage[]>([])
   const [citationsMap, setCitationsMap] = useState<Record<string, Citation[]>>({})
   const [recommendationsMap, setRecommendationsMap] = useState<Record<string, Recommendation[]>>({})
+  const [outOfScopeMap, setOutOfScopeMap] = useState<Record<string, boolean>>({})
   const [input, setInput] = useState('')
   const [status, setStatus] = useState<'ready' | 'streaming'>('ready')
   const [sidebarOpen, setSidebarOpen] = useState(true)
   const abortRef = useRef<AbortController | null>(null)
-  const bottomRef = useRef<HTMLDivElement>(null)
+  const scrollContainerRef = useRef<HTMLDivElement>(null)
+  const activeConversationIdRef = useRef<string | null>(null)
 
   useEffect(() => {
-    fetchConversations()
+    async function init() {
+      await fetchConversations()
+      const lastId = localStorage.getItem('lastConversationId')
+      if (lastId) {
+        await loadConversation(lastId)
+      }
+    }
+    init()
   }, [])
 
   useEffect(() => {
-    bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
+    const el = scrollContainerRef.current
+    if (el) el.scrollTop = el.scrollHeight
   }, [messages])
+
+  useEffect(() => {
+    if (activeConversationId) {
+      localStorage.setItem('lastConversationId', activeConversationId)
+    } else {
+      localStorage.removeItem('lastConversationId')
+    }
+  }, [activeConversationId])
+
+  useEffect(() => {
+    activeConversationIdRef.current = activeConversationId
+  }, [activeConversationId])
 
   async function fetchConversations() {
     const res = await fetch('/api/conversations')
@@ -52,24 +75,22 @@ export function ChatInterface({ userId, userEmail }: ChatInterfaceProps) {
     }
   }
 
-  async function sendMessage(userInput: string, convId: string | null) {
-    const userMsg: ChatMessage = { id: genId(), role: 'user', content: userInput }
-    const assistantId = genId()
-    const assistantMsg: ChatMessage = { id: assistantId, role: 'assistant', content: '' }
-
-    setMessages(prev => [...prev, userMsg, assistantMsg])
-    setStatus('streaming')
-
+  // Core streaming helper — called by both sendMessage and the orphaned-message resume path.
+  async function streamAssistantResponse(
+    assistantId: string,
+    chatHistory: { role: string; content: string }[],
+    convId: string | null,
+    isRetry = false,
+  ) {
     const ctrl = new AbortController()
     abortRef.current = ctrl
-
-    const chatHistory = [...messages, userMsg].map(m => ({ role: m.role, content: m.content }))
+    setStatus('streaming')
 
     try {
       const res = await fetch('/api/chat', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ messages: chatHistory, conversationId: convId }),
+        body: JSON.stringify({ messages: chatHistory, conversationId: convId, isRetry }),
         signal: ctrl.signal,
       })
 
@@ -78,15 +99,15 @@ export function ChatInterface({ userId, userEmail }: ChatInterfaceProps) {
         throw new Error(text || `HTTP ${res.status}`)
       }
 
-      // Read citations and recommendations from response headers
       try {
-        const cits = JSON.parse(res.headers.get('X-Citations') || '[]') as Citation[]
-        const recs = JSON.parse(res.headers.get('X-Recommendations') || '[]') as Recommendation[]
+        const cits = JSON.parse(decodeURIComponent(res.headers.get('X-Citations') || '[]')) as Citation[]
+        const recs = JSON.parse(decodeURIComponent(res.headers.get('X-Recommendations') || '[]')) as Recommendation[]
+        const oos = res.headers.get('X-Out-Of-Scope') === 'true'
         setCitationsMap(prev => ({ ...prev, [assistantId]: cits }))
         setRecommendationsMap(prev => ({ ...prev, [assistantId]: recs }))
+        if (oos) setOutOfScopeMap(prev => ({ ...prev, [assistantId]: true }))
       } catch {}
 
-      // Stream the text body
       const reader = res.body!.getReader()
       const decoder = new TextDecoder()
       let fullText = ''
@@ -115,6 +136,66 @@ export function ChatInterface({ userId, userEmail }: ChatInterfaceProps) {
     }
   }
 
+  // Polls DB every 2 s for an assistant response that was saved while the client was away.
+  // Returns true if found, false if timed out or the user navigated elsewhere.
+  async function pollForAssistantResponse(convId: string, assistantId: string): Promise<boolean> {
+    const MAX_POLLS = 60
+    const POLL_INTERVAL = 2000
+
+    for (let attempt = 0; attempt < MAX_POLLS; attempt++) {
+      await new Promise(r => setTimeout(r, POLL_INTERVAL))
+
+      if (activeConversationIdRef.current !== convId) return false
+
+      try {
+        const res = await fetch(`/api/conversations/${convId}`)
+        if (!res.ok) continue
+
+        const data = await res.json()
+        const freshMsgs: ChatMessage[] = data.messages.map(
+          (m: { id: string; role: string; content: string }) => ({
+            id: m.id,
+            role: m.role as 'user' | 'assistant',
+            content: m.content,
+          })
+        )
+
+        const lastFresh = freshMsgs[freshMsgs.length - 1]
+        if (lastFresh?.role === 'assistant') {
+          const newCits: Record<string, Citation[]> = {}
+          const newRecs: Record<string, Recommendation[]> = {}
+          data.messages.forEach(
+            (m: { id: string; citations: Citation[]; recommendations: Recommendation[] }) => {
+              if (m.citations?.length) newCits[m.id] = m.citations
+              if (m.recommendations?.length) newRecs[m.id] = m.recommendations
+            }
+          )
+          setCitationsMap(newCits)
+          setRecommendationsMap(newRecs)
+          setOutOfScopeMap({})
+          setMessages(freshMsgs.slice(-MAX_MESSAGES_IN_UI))
+          setStatus('ready')
+          return true
+        }
+      } catch {
+        // Network error — continue polling
+      }
+    }
+
+    return false
+  }
+
+  async function sendMessage(userInput: string, convId: string | null) {
+    const userMsg: ChatMessage = { id: genId(), role: 'user', content: userInput }
+    const assistantId = genId()
+    const assistantMsg: ChatMessage = { id: assistantId, role: 'assistant', content: '' }
+
+    setMessages(prev => [...prev, userMsg, assistantMsg].slice(-MAX_MESSAGES_IN_UI))
+
+    const chatHistory = [...messages, userMsg].map(m => ({ role: m.role, content: m.content }))
+    await streamAssistantResponse(assistantId, chatHistory, convId)
+  }
+
   async function createNewConversation(firstMessage?: string): Promise<string | null> {
     const res = await fetch('/api/conversations', {
       method: 'POST',
@@ -132,23 +213,46 @@ export function ChatInterface({ userId, userEmail }: ChatInterfaceProps) {
 
   async function loadConversation(id: string) {
     setActiveConversationId(id)
+    setStatus('ready')
     const res = await fetch(`/api/conversations/${id}`)
-    if (res.ok) {
-      const data = await res.json()
-      const msgs: ChatMessage[] = data.messages.map((m: { id: string; role: string; content: string }) => ({
-        id: m.id,
-        role: m.role as 'user' | 'assistant',
-        content: m.content,
-      }))
+    if (!res.ok) return
+
+    const data = await res.json()
+    const msgs: ChatMessage[] = data.messages.map((m: { id: string; role: string; content: string }) => ({
+      id: m.id,
+      role: m.role as 'user' | 'assistant',
+      content: m.content,
+    }))
+
+    const newCits: Record<string, Citation[]> = {}
+    const newRecs: Record<string, Recommendation[]> = {}
+    data.messages.forEach((m: { id: string; citations: Citation[]; recommendations: Recommendation[] }) => {
+      if (m.citations?.length) newCits[m.id] = m.citations
+      if (m.recommendations?.length) newRecs[m.id] = m.recommendations
+    })
+
+    setCitationsMap(newCits)
+    setRecommendationsMap(newRecs)
+    setOutOfScopeMap({})
+
+    const lastMsg = msgs[msgs.length - 1]
+
+    // Orphaned user message: client disconnected before the assistant response was streamed.
+    // Poll DB first — Ollama may have already finished and saved the response.
+    // Only re-generate via LLM if polling times out (response genuinely never completed).
+    if (lastMsg?.role === 'user') {
+      const assistantId = genId()
+      setMessages([...msgs, { id: assistantId, role: 'assistant' as const, content: '' }].slice(-MAX_MESSAGES_IN_UI))
+      setStatus('streaming')
+
+      const found = await pollForAssistantResponse(id, assistantId)
+      if (!found && activeConversationIdRef.current === id) {
+        // Fallback: response never arrived — re-generate without re-saving the user message
+        const chatHistory = msgs.map(m => ({ role: m.role, content: m.content }))
+        await streamAssistantResponse(assistantId, chatHistory, id, true)
+      }
+    } else {
       setMessages(msgs)
-      const newCits: Record<string, Citation[]> = {}
-      const newRecs: Record<string, Recommendation[]> = {}
-      data.messages.forEach((m: { id: string; citations: Citation[]; recommendations: Recommendation[] }) => {
-        if (m.citations?.length) newCits[m.id] = m.citations
-        if (m.recommendations?.length) newRecs[m.id] = m.recommendations
-      })
-      setCitationsMap(newCits)
-      setRecommendationsMap(newRecs)
     }
   }
 
@@ -159,6 +263,7 @@ export function ChatInterface({ userId, userEmail }: ChatInterfaceProps) {
       setMessages([])
       setCitationsMap({})
       setRecommendationsMap({})
+      setOutOfScopeMap({})
     }
     await fetchConversations()
   }
@@ -168,6 +273,7 @@ export function ChatInterface({ userId, userEmail }: ChatInterfaceProps) {
     setMessages([])
     setCitationsMap({})
     setRecommendationsMap({})
+    setOutOfScopeMap({})
   }
 
   async function handleSubmit(e: React.FormEvent) {
@@ -231,7 +337,11 @@ export function ChatInterface({ userId, userEmail }: ChatInterfaceProps) {
         </div>
 
         {/* Messages */}
-        <ScrollArea className="flex-1">
+        <div
+          ref={scrollContainerRef}
+          className="flex-1 overflow-y-auto min-h-0"
+          style={{ scrollBehavior: 'smooth' }}
+        >
           <div className="max-w-3xl mx-auto px-4 py-6 space-y-6">
             {messages.length === 0 && (
               <div className="flex flex-col items-center justify-center h-64 text-center space-y-3">
@@ -255,11 +365,11 @@ export function ChatInterface({ userId, userEmail }: ChatInterfaceProps) {
                 citations={citationsMap[message.id] || []}
                 recommendations={recommendationsMap[message.id] || []}
                 isStreaming={status === 'streaming' && i === messages.length - 1 && message.role === 'assistant'}
+                isOutOfScope={!!outOfScopeMap[message.id]}
               />
             ))}
-            <div ref={bottomRef} />
           </div>
-        </ScrollArea>
+        </div>
 
         {/* Input */}
         <div className="border-t border-slate-800 bg-slate-900 px-4 py-4">

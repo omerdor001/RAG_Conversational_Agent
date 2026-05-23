@@ -18,8 +18,6 @@ export async function POST(req: NextRequest) {
   let fileType: string | undefined
   let content: string | undefined
   let sourceUrl: string | undefined
-  let imageBase64: string | undefined
-  let imageMimeType: string | undefined
   let storageUrl: string | undefined
 
   if (contentType.includes('multipart/form-data')) {
@@ -30,6 +28,9 @@ export async function POST(req: NextRequest) {
     if (sourceType === 'document') {
       const file = formData.get('file') as File
       if (!file) return NextResponse.json({ error: 'File required' }, { status: 400 })
+      if (file.size > 10 * 1024 * 1024) {
+        return NextResponse.json({ error: 'File too large. Maximum size is 10MB.' }, { status: 413 })
+      }
       fileType = getFileType(file.name)
       title = title || file.name
       const arrayBuffer = await file.arrayBuffer()
@@ -44,21 +45,6 @@ export async function POST(req: NextRequest) {
         const { data: urlData } = supabase.storage.from('documents').getPublicUrl(storagePath)
         storageUrl = urlData.publicUrl
       }
-
-    } else if (sourceType === 'image') {
-      const file = formData.get('file') as File
-      if (!file) return NextResponse.json({ error: 'Image file required' }, { status: 400 })
-      title = title || file.name
-      const arrayBuffer = await file.arrayBuffer()
-      imageBase64 = Buffer.from(arrayBuffer).toString('base64')
-      imageMimeType = file.type
-      fileType = getFileType(file.name)
-
-      // Upload image to Storage
-      const storagePath = `${user.id}/images/${Date.now()}-${file.name}`
-      await supabase.storage.from('documents').upload(storagePath, arrayBuffer, { contentType: file.type })
-      const { data: urlData } = supabase.storage.from('documents').getPublicUrl(storagePath)
-      storageUrl = urlData.publicUrl
 
     } else if (sourceType === 'url') {
       sourceUrl = formData.get('url') as string
@@ -75,7 +61,7 @@ export async function POST(req: NextRequest) {
     sourceUrl = body.url
   }
 
-  if (!['document', 'url', 'image', 'text'].includes(sourceType)) {
+  if (!['document', 'url', 'text'].includes(sourceType)) {
     return NextResponse.json({ error: 'Invalid source type' }, { status: 400 })
   }
 
@@ -103,12 +89,10 @@ export async function POST(req: NextRequest) {
     await processDocument({
       documentId: doc.id,
       userId: user.id,
-      sourceType: sourceType as 'document' | 'url' | 'image' | 'text',
+      sourceType: sourceType as 'document' | 'url' | 'text',
       content,
       fileBuffer,
       fileType,
-      imageBase64,
-      imageMimeType,
       sourceUrl,
     })
 

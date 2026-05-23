@@ -1,6 +1,6 @@
 import { createClient } from '@supabase/supabase-js'
 import { chunkText } from '@/lib/rag/chunker'
-import { getEmbedding, getImageDescription } from '@/lib/llm/provider'
+import { getEmbedding } from '@/lib/llm/provider'
 import { parseFile, getFileType } from './document-parser'
 import { scrapeURL } from './url-scraper'
 import type { SourceType } from '@/lib/types'
@@ -17,11 +17,9 @@ export interface ProcessDocumentParams {
   documentId: string
   userId: string
   sourceType: SourceType
-  content?: string        // raw text or pre-extracted content
+  content?: string
   fileBuffer?: Buffer
   fileType?: string
-  imageBase64?: string
-  imageMimeType?: string
   sourceUrl?: string
 }
 
@@ -52,11 +50,6 @@ export async function processDocument(params: ProcessDocumentParams): Promise<vo
         .from('documents')
         .update({ title: scraped.title, source_url: params.sourceUrl })
         .eq('id', params.documentId)
-    } else if (params.sourceType === 'image') {
-      if (!params.imageBase64 || !params.imageMimeType) throw new Error('Image data required')
-      rawText = await getImageDescription(params.imageBase64, params.imageMimeType)
-      metadata.is_image_description = true
-      metadata.original_mime_type = params.imageMimeType
     } else if (params.sourceType === 'document') {
       if (!params.fileBuffer) throw new Error('File buffer required')
       rawText = await parseFile(params.fileBuffer, params.fileType || 'txt')
@@ -68,22 +61,37 @@ export async function processDocument(params: ProcessDocumentParams): Promise<vo
     const chunks = chunkText(rawText)
     if (chunks.length === 0) throw new Error('Text too short to chunk')
 
-    // Embed all chunks
-    const embeddedChunks = await Promise.all(
-      chunks.map(async (chunk) => ({
-        user_id: params.userId,
-        document_id: params.documentId,
-        content: chunk.content,
-        chunk_index: chunk.chunkIndex,
-        token_count: chunk.tokenCount,
-        metadata: {
-          ...metadata,
-          source_type: params.sourceType,
-          source_url: params.sourceUrl || null,
-        },
-        embedding: await getEmbedding(chunk.content),
-      }))
-    )
+    // Embed chunks in sequential batches to avoid memory exhaustion and rate limits
+    const EMBED_BATCH_SIZE = 5
+    const embeddedChunks: Array<{
+      user_id: string
+      document_id: string
+      content: string
+      chunk_index: number
+      token_count: number
+      metadata: Record<string, unknown>
+      embedding: number[]
+    }> = []
+
+    for (let i = 0; i < chunks.length; i += EMBED_BATCH_SIZE) {
+      const batch = chunks.slice(i, i + EMBED_BATCH_SIZE)
+      const batchResults = await Promise.all(
+        batch.map(async (chunk) => ({
+          user_id: params.userId,
+          document_id: params.documentId,
+          content: chunk.content,
+          chunk_index: chunk.chunkIndex,
+          token_count: chunk.tokenCount,
+          metadata: {
+            ...metadata,
+            source_type: params.sourceType,
+            source_url: params.sourceUrl || null,
+          },
+          embedding: await getEmbedding(chunk.content),
+        }))
+      )
+      embeddedChunks.push(...batchResults)
+    }
 
     // Delete old chunks if re-indexing
     await supabase.from('chunks').delete().eq('document_id', params.documentId)

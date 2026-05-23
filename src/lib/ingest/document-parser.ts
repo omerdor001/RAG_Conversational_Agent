@@ -1,15 +1,22 @@
 // Parses various document formats into plain text
 
 export async function parsePDF(buffer: Buffer): Promise<string> {
-  // pdf-parse ESM export doesn't have .default; use named import
-  const mod = await import('pdf-parse')
-  const pdfParse = (mod as unknown as { default: (b: Buffer) => Promise<{ text: string }> }).default ?? mod
-  const result = await (pdfParse as (b: Buffer) => Promise<{ text: string }>)(buffer)
-  return result.text
+  // pdf-parse v2 uses a class-based API: new PDFParse({ data }) → .getText()
+  // eslint-disable-next-line @typescript-eslint/no-require-imports, @typescript-eslint/no-explicit-any
+  const { PDFParse } = require('pdf-parse') as { PDFParse: new (opts: { data: Uint8Array }) => any }
+  const parser = new PDFParse({ data: new Uint8Array(buffer) })
+  try {
+    const result = await parser.getText()
+    return result.text as string
+  } finally {
+    await parser.destroy().catch(() => {})
+  }
 }
 
 export async function parseDOCX(buffer: Buffer): Promise<string> {
-  const mammoth = await import('mammoth')
+  const mod = await import('mammoth')
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const mammoth = (mod as any).default ?? mod
   const result = await mammoth.extractRawText({ buffer })
   return result.value
 }

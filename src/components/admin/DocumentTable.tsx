@@ -109,8 +109,8 @@ export function DocumentTable({ documents, onRefresh }: DocumentTableProps) {
             const Icon = SOURCE_ICONS[doc.source_type] || FileText
             return (
               <tr key={doc.id} className="hover:bg-slate-800/30 transition-colors group">
-                <td className="px-4 py-3">
-                  <div className="flex items-center gap-2 max-w-xs">
+                <td className="px-4 py-3 max-w-xs">
+                  <div className="flex items-center gap-2">
                     <span className="text-slate-200 font-medium truncate">{doc.title}</span>
                     {doc.source_url && (
                       <a href={doc.source_url} target="_blank" rel="noopener noreferrer" className="opacity-0 group-hover:opacity-100 text-slate-500 hover:text-slate-300 flex-shrink-0">
@@ -118,8 +118,11 @@ export function DocumentTable({ documents, onRefresh }: DocumentTableProps) {
                       </a>
                     )}
                   </div>
+                  {doc.source_type === 'url' && doc.source_url && (
+                    <p className="text-xs text-slate-600 truncate mt-0.5">{doc.source_url.replace(/^https?:\/\//, '')}</p>
+                  )}
                   {doc.status === 'failed' && doc.error_message && (
-                    <p className="text-xs text-red-400 mt-0.5 truncate">{doc.error_message}</p>
+                    <p className="text-xs text-red-400 mt-0.5 line-clamp-2" title={doc.error_message}>{doc.error_message}</p>
                   )}
                 </td>
                 <td className="px-4 py-3">

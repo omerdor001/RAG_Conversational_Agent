@@ -1,7 +1,6 @@
 // Semantic-boundary chunker: splits on sentences/paragraphs, respects token limits
-// Target: 400 tokens per chunk, 20 token overlap
-
-const CHUNK_SIZE = 400
+// 300 tokens per chunk, 20 token overlap — well within nomic-embed-text's 8192-token context
+const CHUNK_SIZE = 300
 const CHUNK_OVERLAP = 20
 
 // Rough token estimate: 1 token ≈ 4 chars (cl100k_base approximation)

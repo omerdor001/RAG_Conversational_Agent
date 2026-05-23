@@ -1,15 +1,20 @@
 'use client'
 
 import { useState, useCallback } from 'react'
-import { useDropzone } from 'react-dropzone'
+import { useDropzone, FileRejection } from 'react-dropzone'
 import { toast } from 'sonner'
-import { Upload, Link, Type, Image, FileText, Loader2, X } from 'lucide-react'
+import { Upload, Link, Type, FileText, Loader2, X, AlertCircle } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Textarea } from '@/components/ui/textarea'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { cn } from '@/lib/utils'
+
+function formatBytes(bytes: number): string {
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(0)} KB`
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`
+}
 
 interface UploadFormProps {
   onSuccess: () => void
@@ -23,43 +28,55 @@ export function UploadForm({ onSuccess }: UploadFormProps) {
   const [textTitle, setTextTitle] = useState('')
   const [selectedFile, setSelectedFile] = useState<File | null>(null)
   const [fileTitle, setFileTitle] = useState('')
+  const [fileError, setFileError] = useState<string | null>(null)
 
   const onDrop = useCallback((accepted: File[]) => {
+    setFileError(null)
     if (accepted[0]) {
       setSelectedFile(accepted[0])
       setFileTitle(accepted[0].name.replace(/\.[^/.]+$/, ''))
     }
   }, [])
 
+  const onDropRejected = useCallback((rejectedFiles: FileRejection[]) => {
+    const rejection = rejectedFiles[0]
+    if (!rejection) return
+    const tooBig = rejection.errors.find(e => e.code === 'file-too-large')
+    if (tooBig) {
+      setFileError(
+        `File too large (${formatBytes(rejection.file.size)}). Maximum size is 10 MB.`
+      )
+    } else {
+      setFileError(rejection.errors[0]?.message || 'File not accepted')
+    }
+    setSelectedFile(null)
+  }, [])
+
   const { getRootProps, getInputProps, isDragActive } = useDropzone({
     onDrop,
+    onDropRejected,
     accept: {
       'application/pdf': ['.pdf'],
       'application/vnd.openxmlformats-officedocument.wordprocessingml.document': ['.docx'],
       'text/plain': ['.txt'],
       'text/markdown': ['.md'],
       'text/csv': ['.csv'],
-      'image/jpeg': ['.jpg', '.jpeg'],
-      'image/png': ['.png'],
-      'image/webp': ['.webp'],
     },
     maxFiles: 1,
     maxSize: 10 * 1024 * 1024, // 10MB
   })
 
-  const isImage = selectedFile && selectedFile.type.startsWith('image/')
-
   async function uploadFile() {
     if (!selectedFile) return
     setUploading(true)
     const formData = new FormData()
-    formData.append('sourceType', isImage ? 'image' : 'document')
+    formData.append('sourceType', 'document')
     formData.append('file', selectedFile)
     formData.append('title', fileTitle || selectedFile.name)
 
     try {
       const res = await fetch('/api/ingest', { method: 'POST', body: formData })
-      const data = await res.json()
+      const data = await res.json().catch(() => ({ error: res.status === 504 ? 'Request timed out — try a smaller file' : 'Upload failed' }))
       if (!res.ok) throw new Error(data.error || 'Upload failed')
       toast.success(`"${fileTitle || selectedFile.name}" indexed successfully`)
       setSelectedFile(null)
@@ -82,7 +99,7 @@ export function UploadForm({ onSuccess }: UploadFormProps) {
 
     try {
       const res = await fetch('/api/ingest', { method: 'POST', body: formData })
-      const data = await res.json()
+      const data = await res.json().catch(() => ({ error: res.status === 504 ? 'Request timed out' : 'Ingestion failed' }))
       if (!res.ok) throw new Error(data.error || 'Ingestion failed')
       toast.success('URL indexed successfully')
       setUrlValue('')
@@ -104,7 +121,7 @@ export function UploadForm({ onSuccess }: UploadFormProps) {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ sourceType: 'text', title: textTitle || 'Untitled text', content: textContent }),
       })
-      const data = await res.json()
+      const data = await res.json().catch(() => ({ error: 'Ingestion failed' }))
       if (!res.ok) throw new Error(data.error || 'Ingestion failed')
       toast.success('Text indexed successfully')
       setTextContent('')
@@ -121,7 +138,7 @@ export function UploadForm({ onSuccess }: UploadFormProps) {
     <Tabs defaultValue="file" className="w-full">
       <TabsList className="bg-slate-800 border border-slate-700">
         <TabsTrigger value="file" className="gap-1.5 data-[state=active]:bg-indigo-600">
-          <FileText className="w-3.5 h-3.5" />File / Image
+          <FileText className="w-3.5 h-3.5" />File
         </TabsTrigger>
         <TabsTrigger value="url" className="gap-1.5 data-[state=active]:bg-indigo-600">
           <Link className="w-3.5 h-3.5" />URL
@@ -131,8 +148,14 @@ export function UploadForm({ onSuccess }: UploadFormProps) {
         </TabsTrigger>
       </TabsList>
 
-      {/* File / Image */}
+      {/* File */}
       <TabsContent value="file" className="space-y-4 mt-4">
+        {fileError && (
+          <div className="flex items-start gap-2 rounded-lg border border-red-500/30 bg-red-500/10 px-3 py-2 text-sm text-red-400">
+            <AlertCircle className="w-4 h-4 mt-0.5 flex-shrink-0" />
+            <span>{fileError}</span>
+          </div>
+        )}
         {!selectedFile ? (
           <div
             {...getRootProps()}
@@ -149,18 +172,18 @@ export function UploadForm({ onSuccess }: UploadFormProps) {
               {isDragActive ? 'Drop it here' : 'Drop a file or click to browse'}
             </p>
             <p className="text-xs text-slate-600 mt-1">
-              PDF, DOCX, TXT, MD, CSV, JPG, PNG, WEBP — up to 10MB
+              PDF, DOCX, TXT, MD, CSV — up to 10MB
             </p>
           </div>
         ) : (
           <div className="rounded-xl border border-slate-700 bg-slate-800/50 p-4 space-y-3">
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-2">
-                {isImage ? <Image className="w-4 h-4 text-indigo-400" /> : <FileText className="w-4 h-4 text-indigo-400" />}
+                <FileText className="w-4 h-4 text-indigo-400" />
                 <span className="text-sm text-slate-200 font-medium truncate">{selectedFile.name}</span>
                 <span className="text-xs text-slate-500">({(selectedFile.size / 1024).toFixed(0)} KB)</span>
               </div>
-              <Button variant="ghost" size="icon" onClick={() => setSelectedFile(null)} className="w-6 h-6 text-slate-500">
+              <Button variant="ghost" size="icon" onClick={() => { setSelectedFile(null); setFileError(null) }} className="w-6 h-6 text-slate-500">
                 <X className="w-3 h-3" />
               </Button>
             </div>
@@ -173,11 +196,6 @@ export function UploadForm({ onSuccess }: UploadFormProps) {
                 className="bg-slate-700 border-slate-600 text-white h-8 text-sm"
               />
             </div>
-            {isImage && (
-              <p className="text-xs text-slate-500 bg-indigo-500/10 rounded-lg px-3 py-2">
-                Image will be analyzed by vision AI and the description will be indexed for semantic search.
-              </p>
-            )}
             <Button onClick={uploadFile} disabled={uploading} className="w-full bg-indigo-600 hover:bg-indigo-500 gap-2">
               {uploading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Upload className="w-4 h-4" />}
               {uploading ? 'Processing...' : 'Index this file'}

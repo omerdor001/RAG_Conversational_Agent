@@ -1,18 +1,31 @@
 import { NextResponse } from 'next/server'
-import { createClient } from '@/lib/supabase/server'
+import { createClient, createServiceClient } from '@/lib/supabase/server'
 
 export async function GET() {
   const supabase = await createClient()
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
 
-  const { data, error } = await supabase
+  let { data, error } = await supabase
     .from('profiles')
     .select()
     .eq('id', user.id)
-    .single()
+    .maybeSingle()
 
   if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+
+  // Auto-create profile if the trigger didn't fire (e.g. user pre-dates migration)
+  if (!data) {
+    const admin = await createServiceClient()
+    const { data: created, error: insertError } = await admin
+      .from('profiles')
+      .upsert({ id: user.id, email: user.email! }, { onConflict: 'id' })
+      .select()
+      .single()
+    if (insertError) return NextResponse.json({ error: insertError.message }, { status: 500 })
+    data = created
+  }
+
   return NextResponse.json({ profile: data })
 }
 
