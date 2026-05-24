@@ -38,17 +38,6 @@ export interface Document {
   updated_at: string
 }
 
-export interface Chunk {
-  id: string
-  user_id: string
-  document_id: string
-  content: string
-  chunk_index: number
-  token_count: number
-  metadata: Record<string, unknown>
-  created_at: string
-}
-
 export interface MatchedChunk {
   id: string
   document_id: string
@@ -102,16 +91,3 @@ export interface Message {
   created_at: string
 }
 
-export interface IngestRequest {
-  type: SourceType
-  title?: string
-  content?: string
-  url?: string
-  file?: File
-}
-
-export interface RAGContext {
-  chunks: MatchedChunk[]
-  query: string
-  userId: string
-}

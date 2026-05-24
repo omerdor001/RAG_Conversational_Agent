@@ -16,7 +16,7 @@ export async function GET() {
 
   // Auto-create profile if the trigger didn't fire (e.g. user pre-dates migration)
   if (!data) {
-    const admin = await createServiceClient()
+    const admin = createServiceClient()
     const { data: created, error: insertError } = await admin
       .from('profiles')
       .upsert({ id: user.id, email: user.email! }, { onConflict: 'id' })

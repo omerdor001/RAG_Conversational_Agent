@@ -33,11 +33,7 @@ export function parseCSV(text: string): string {
   return rows.join('\n')
 }
 
-export async function parseFile(
-  buffer: Buffer,
-  fileType: string,
-  rawText?: string
-): Promise<string> {
+export async function parseFile(buffer: Buffer, fileType: string): Promise<string> {
   const type = fileType.toLowerCase()
 
   if (type === 'pdf') return parsePDF(buffer)
@@ -45,8 +41,7 @@ export async function parseFile(
   if (type === 'csv') return parseCSV(buffer.toString('utf-8'))
   if (['txt', 'md', 'markdown', 'text'].includes(type)) return buffer.toString('utf-8')
 
-  // Fallback: try UTF-8 decode
-  return rawText || buffer.toString('utf-8')
+  return buffer.toString('utf-8')
 }
 
 export function getFileType(filename: string): string {

@@ -95,8 +95,6 @@ export function ChatInterface({ userId, userEmail, isEmbedded = false }: ChatInt
         signal: ctrl.signal,
       })
 
-      console.log('[ChatInterface] fetch response status:', res.status, '| content-type:', res.headers.get('content-type'))
-
       if (!res.ok) {
         const text = await res.text().catch(() => '')
         throw new Error(text || `HTTP ${res.status}`)
@@ -106,7 +104,6 @@ export function ChatInterface({ userId, userEmail, isEmbedded = false }: ChatInt
         const cits = JSON.parse(decodeURIComponent(res.headers.get('X-Citations') || '[]')) as Citation[]
         const recs = JSON.parse(decodeURIComponent(res.headers.get('X-Recommendations') || '[]')) as Recommendation[]
         const oos = res.headers.get('X-Out-Of-Scope') === 'true'
-        console.log('[ChatInterface] headers — citations:', cits.length, '| recs:', recs.length, '| oos:', oos)
         setCitationsMap(prev => ({ ...prev, [assistantId]: cits }))
         setRecommendationsMap(prev => ({ ...prev, [assistantId]: recs }))
         if (oos) setOutOfScopeMap(prev => ({ ...prev, [assistantId]: true }))
@@ -115,22 +112,17 @@ export function ChatInterface({ userId, userEmail, isEmbedded = false }: ChatInt
       const reader = res.body!.getReader()
       const decoder = new TextDecoder()
       let fullText = ''
-      let chunkCount = 0
 
       while (true) {
         const { done, value } = await reader.read()
         if (done) break
         const chunk = decoder.decode(value, { stream: true })
-        chunkCount++
-        if (chunkCount <= 3) console.log(`[ChatInterface] chunk #${chunkCount}:`, JSON.stringify(chunk.slice(0, 60)))
         fullText += chunk
         const snapshot = fullText
         setMessages(prev =>
           prev.map(m => m.id === assistantId ? { ...m, content: snapshot } : m)
         )
       }
-
-      console.log('[ChatInterface] stream done — total chunks:', chunkCount, '| text length:', fullText.length)
 
       // If the LLM self-reported out-of-scope (chunks were retrieved but didn't answer the question),
       // drop the spurious citations that were computed before streaming started.

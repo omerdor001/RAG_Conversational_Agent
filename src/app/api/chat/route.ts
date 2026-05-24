@@ -119,9 +119,6 @@ CITATION RULES:
     }
   }
 
-  const modelId = profile?.llm_model ?? process.env.OLLAMA_LLM_MODEL ?? 'llama3.2:3b'
-  console.log('[chat/route] calling streamText — model:', modelId, '| temp:', temperature, '| maxTokens:', maxTokens, '| contextLen:', fullSystem.length)
-
   const result = streamText({
     model: getLLMModel(profile?.llm_model ?? undefined),
     system: fullSystem,
@@ -129,7 +126,6 @@ CITATION RULES:
     temperature,
     maxOutputTokens: maxTokens,
     onFinish: async ({ text }) => {
-      console.log('[chat/route] onFinish — text length:', text.length, '| preview:', text.slice(0, 80))
       if (!conversationId) return
       try {
         const { createClient: createSC } = await import('@/lib/supabase/server')
@@ -157,22 +153,15 @@ CITATION RULES:
   const encoder = new TextEncoder()
   const readable = new ReadableStream({
     async start(controller) {
-      let chunkCount = 0
       let errored = false
       try {
-        console.log('[chat/route] stream reader starting')
         const reader = result.textStream.getReader()
         while (true) {
           const { done, value } = await reader.read()
           if (done) break
-          if (value) {
-            chunkCount++
-            if (chunkCount <= 3) console.log(`[chat/route] chunk #${chunkCount}:`, JSON.stringify(value.slice(0, 60)))
-            controller.enqueue(encoder.encode(value))
-          }
+          if (value) controller.enqueue(encoder.encode(value))
         }
         reader.releaseLock()
-        console.log('[chat/route] stream done — total chunks:', chunkCount)
       } catch (err) {
         console.error('[chat/route] stream error:', err)
         errored = true
