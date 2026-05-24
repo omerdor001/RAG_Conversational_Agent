@@ -342,6 +342,15 @@ async function scrapeURL(url: string): Promise<ScrapedPage> {
   return { title, content }
 }
 
+async function seedUserProfile(userId: string, role: string, systemPrompt: string): Promise<void> {
+  const { error } = await supabase
+    .from('profiles')
+    .update({ role, system_prompt: systemPrompt, agent_persona: 'technical_expert' })
+    .eq('id', userId)
+  if (error) console.warn(`  ⚠ Could not update profile: ${error.message}`)
+  else console.log(`  ✓ Profile configured: ${role}`)
+}
+
 async function seedUserFromUrls(userId: string, domain: string, urls: string[]) {
   const uniqueUrls = [...new Set(urls)]
   if (uniqueUrls.length !== urls.length) {
@@ -505,71 +514,263 @@ async function seedUserFromUrls(userId: string, domain: string, urls: string[]) 
   console.log(`\n  Summary: ${successCount} indexed, ${skipCount} skipped, ${failCount} failed`)
 }
 
-// ─── Knowledge Base: AI Agents & Multi-Agent Systems ────────────────────────
-// LangGraph docs render via JS (empty page on fetch) — replaced with Wikipedia
-// and open-access sources that scrape reliably.
+// ─── Knowledge Base: Next.js App Router Documentation ───────────────────────
+// ~25 core pages targeting ~50k tokens total (each page capped at 40k chars ≈ 10k tokens)
 
-const AI_AGENTS_URLS = [
-  // LangChain Agents (8 URLs)
-  'https://python.langchain.com/docs/modules/agents/',
-  'https://python.langchain.com/docs/modules/agents/agent_types/',
-  'https://python.langchain.com/docs/modules/agents/agent_types/react',
-  'https://python.langchain.com/docs/modules/agents/agent_types/openai_functions_agent',
-  'https://python.langchain.com/docs/modules/agents/agent_types/structured_chat',
-  'https://python.langchain.com/docs/modules/agents/tools/',
-  'https://python.langchain.com/docs/modules/agents/tools/custom_tools',
-  'https://python.langchain.com/docs/modules/memory/',
+const NEXTJS_URLS = [
+  // Getting Started — core concepts
+  'https://nextjs.org/docs/app/getting-started/installation',
+  'https://nextjs.org/docs/app/getting-started/project-structure',
+  'https://nextjs.org/docs/app/getting-started/layouts-and-pages',
+  'https://nextjs.org/docs/app/getting-started/linking-and-navigating',
+  'https://nextjs.org/docs/app/getting-started/server-and-client-components',
+  'https://nextjs.org/docs/app/getting-started/fetching-data',
+  'https://nextjs.org/docs/app/getting-started/mutating-data',
+  'https://nextjs.org/docs/app/getting-started/caching',
+  'https://nextjs.org/docs/app/getting-started/error-handling',
+  'https://nextjs.org/docs/app/getting-started/deploying',
 
-  // Agent theory — Wikipedia (reliable, focused articles)
-  'https://en.wikipedia.org/wiki/Intelligent_agent',
-  'https://en.wikipedia.org/wiki/Multi-agent_system',
-  'https://en.wikipedia.org/wiki/Retrieval-augmented_generation',
-  'https://en.wikipedia.org/wiki/Prompt_engineering',
-  'https://en.wikipedia.org/wiki/Chain-of-thought_prompting',
-  // LlamaIndex (3 working URLs)
-  'https://docs.llamaindex.ai/en/stable/understanding/',
-  'https://docs.llamaindex.ai/en/stable/module_guides/deploying/agents/',
-  'https://docs.llamaindex.ai/en/stable/module_guides/querying/',
+  // Guides — most practical
+  'https://nextjs.org/docs/app/guides/authentication',
+  'https://nextjs.org/docs/app/guides/environment-variables',
+  'https://nextjs.org/docs/app/guides/forms',
+  'https://nextjs.org/docs/app/guides/redirecting',
+  'https://nextjs.org/docs/app/guides/streaming',
+  'https://nextjs.org/docs/app/guides/self-hosting',
+  'https://nextjs.org/docs/app/guides/production-checklist',
+  'https://nextjs.org/docs/app/guides/static-exports',
 
-  // CrewAI (4 URLs)
-  'https://docs.crewai.com/introduction',
-  'https://docs.crewai.com/core-concepts/Agents/',
-  'https://docs.crewai.com/core-concepts/Tasks/',
-  'https://docs.crewai.com/core-concepts/Crews/',
+  // API Reference — key components
+  'https://nextjs.org/docs/app/api-reference/components/image',
+  'https://nextjs.org/docs/app/api-reference/components/link',
 
-  // Research & Best Practices (4 URLs)
-  'https://lilianweng.github.io/posts/2023-06-23-agent/',
-  'https://www.anthropic.com/news/tool-use-ga',
-  'https://arxiv.org/abs/2210.03629',
+  // API Reference — essential file conventions
+  'https://nextjs.org/docs/app/api-reference/file-conventions/layout',
+  'https://nextjs.org/docs/app/api-reference/file-conventions/page',
+  'https://nextjs.org/docs/app/api-reference/file-conventions/route',
+  'https://nextjs.org/docs/app/api-reference/file-conventions/error',
+  'https://nextjs.org/docs/app/api-reference/file-conventions/dynamic-routes',
+
+  // API Reference — core functions
+  'https://nextjs.org/docs/app/api-reference/functions/cookies',
+  'https://nextjs.org/docs/app/api-reference/functions/headers',
+  'https://nextjs.org/docs/app/api-reference/functions/redirect',
+  'https://nextjs.org/docs/app/api-reference/functions/use-router',
+  'https://nextjs.org/docs/app/api-reference/functions/revalidatePath',
 ]
 
-// ─── Knowledge Base: Personal Finance & FIRE Movement ───────────────────────
-// Investopedia/Bogleheads/MrMoneyMustache block scrapers (403).
-// Accessible Investopedia pages are kept; rest replaced with Wikipedia.
+// ─── Knowledge Base: r/cookingforbeginners (popular posts) ──────────────────
+// Uses Reddit's public JSON API — no auth required, just a descriptive User-Agent.
 
-const FINANCE_URLS = [
-  // Investopedia — pages that allow scraping
-  'https://www.investopedia.com/personal-finance-4427760',
-  'https://www.investopedia.com/terms/e/emergency_fund.asp',
-  'https://www.investopedia.com/terms/b/budget.asp',
-  'https://www.investopedia.com/articles/personal-finance/100516/setting-financial-goals/',
-  'https://www.investopedia.com/retirement/roth-vs-traditional-ira-which-is-right-for-you/',
-  'https://www.investopedia.com/terms/1/401kplan.asp',
-  'https://www.investopedia.com/terms/d/debtconsolidation.asp',
-  'https://www.investopedia.com/terms/n/networth.asp',
-  'https://www.investopedia.com/terms/t/taxbracket.asp',
+const REDDIT_USER_AGENT = 'RAGBot/1.0 (educational RAG demo)'
+const COOKING_SUBREDDIT = 'cookingforbeginners'
+const REDDIT_TOKEN_TARGET = 50000
 
-  // Wikipedia — core finance & FIRE concepts (replacing blocked sources)
-  'https://en.wikipedia.org/wiki/Compound_interest',
-  'https://en.wikipedia.org/wiki/Index_fund',
-  'https://en.wikipedia.org/wiki/Diversification_(finance)',
-  'https://en.wikipedia.org/wiki/Inflation',
-  'https://en.wikipedia.org/wiki/FIRE_movement',
-  'https://en.wikipedia.org/wiki/Financial_independence',
-  'https://en.wikipedia.org/wiki/Passive_management',
-  'https://en.wikipedia.org/wiki/Safe_withdrawal_rate',
-  'https://en.wikipedia.org/wiki/Net_worth',
-]
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+async function fetchRedditListing(url: string): Promise<any[]> {
+  const res = await fetch(url, {
+    headers: { 'User-Agent': REDDIT_USER_AGENT, Accept: 'application/json' },
+    signal: AbortSignal.timeout(15000),
+  })
+  if (!res.ok) throw new Error(`Reddit API ${res.status}: ${res.statusText}`)
+  const data = await res.json()
+  return data.data.children.map((c: { data: unknown }) => c.data)
+}
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+async function fetchRedditPostComments(permalink: string): Promise<any[]> {
+  const url = `https://www.reddit.com${permalink}.json?limit=25&depth=1&sort=top`
+  const res = await fetch(url, {
+    headers: { 'User-Agent': REDDIT_USER_AGENT, Accept: 'application/json' },
+    signal: AbortSignal.timeout(15000),
+  })
+  if (!res.ok) throw new Error(`Reddit comments API ${res.status}`)
+  const data = await res.json()
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  return (data[1]?.data?.children ?? []).map((c: { data: unknown }) => c.data) as any[]
+}
+
+async function seedRedditCommunity(userId: string, subreddit: string): Promise<void> {
+  console.log(`\n  Fetching popular posts from r/${subreddit}...`)
+
+  // Combine top-all-time and hot to maximise useful content diversity
+  const [topPosts, hotPosts] = await Promise.all([
+    fetchRedditListing(`https://www.reddit.com/r/${subreddit}/top.json?t=all&limit=100`),
+    fetchRedditListing(`https://www.reddit.com/r/${subreddit}/hot.json?limit=50`),
+  ])
+
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const seenIds = new Set<string>()
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const posts: any[] = []
+  for (const p of [...topPosts, ...hotPosts]) {
+    if (!seenIds.has(p.id) && p.selftext && p.selftext !== '[deleted]' && p.selftext !== '[removed]' && p.selftext.length > 80) {
+      seenIds.add(p.id)
+      posts.push(p)
+    }
+  }
+
+  console.log(`  Found ${posts.length} posts with body text`)
+
+  let totalTokens = 0
+  let successCount = 0
+  let skipCount = 0
+  let failCount = 0
+
+  for (const post of posts) {
+    if (totalTokens >= REDDIT_TOKEN_TARGET) {
+      console.log(`  ✓ Reached ~${REDDIT_TOKEN_TARGET} token target`)
+      break
+    }
+
+    const postUrl = `https://www.reddit.com${post.permalink}`
+
+    const { data: existing } = await supabase
+      .from('documents')
+      .select('id, status')
+      .eq('user_id', userId)
+      .eq('source_url', postUrl)
+      .maybeSingle()
+
+    if (existing?.status === 'indexed') {
+      const { count: embeddedCount } = await supabase
+        .from('chunks')
+        .select('id', { count: 'exact', head: true })
+        .eq('document_id', existing.id)
+        .not('embedding', 'is', null)
+
+      if ((embeddedCount ?? 0) > 0) {
+        console.log(`    ↩ Already indexed: ${String(post.title).slice(0, 60)}`)
+        skipCount++
+        totalTokens += estimateTokens(post.selftext as string)
+        continue
+      }
+      console.log(`    ⚠ Embeddings missing — re-indexing: ${String(post.title).slice(0, 60)}`)
+    }
+
+    // Fetch top comments to enrich the document
+    let commentText = ''
+    try {
+      const comments = await fetchRedditPostComments(post.permalink as string)
+      const topComments = comments
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        .filter((c: any) => c.body && c.body !== '[deleted]' && c.body !== '[removed]' && (c.score ?? 0) >= 3)
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        .sort((a: any, b: any) => (b.score ?? 0) - (a.score ?? 0))
+        .slice(0, 12)
+      if (topComments.length > 0) {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        commentText = '\n\n## Top Community Responses\n\n' + topComments.map((c: any) => `**${c.author} (${c.score} upvotes):** ${c.body}`).join('\n\n')
+      }
+    } catch {
+      // comments are a bonus — continue without them
+    }
+
+    const rawContent = `# ${post.title}\n\n${post.selftext}${commentText}`.slice(0, 40000)
+    const tokens = estimateTokens(rawContent)
+
+    let docId: string = existing?.id
+    if (!docId) {
+      const { data: doc, error } = await supabase
+        .from('documents')
+        .insert({
+          user_id: userId,
+          title: post.title,
+          source_type: 'url',
+          source_url: postUrl,
+          status: 'indexing',
+          raw_content: rawContent,
+          token_count: tokens,
+          metadata: {
+            seeded: true,
+            subreddit,
+            post_id: post.id,
+            score: post.score,
+            scraped_at: new Date().toISOString(),
+          },
+        })
+        .select('id')
+        .single()
+
+      if (error || !doc) {
+        console.error(`    ✗ Failed to create document: ${error?.message}`)
+        failCount++
+        continue
+      }
+      docId = doc.id
+    } else {
+      await supabase.from('documents').update({ status: 'indexing' }).eq('id', docId)
+    }
+
+    const chunks = chunkText(rawContent)
+    if (chunks.length === 0) {
+      await supabase.from('documents').update({ status: 'failed', error_message: 'No chunks produced' }).eq('id', docId)
+      failCount++
+      continue
+    }
+
+    await supabase.from('chunks').delete().eq('document_id', docId)
+
+    const embeddedChunks = []
+    let embedFailed = false
+    for (const chunk of chunks) {
+      try {
+        const embedding = await getEmbedding(chunk.content)
+        embeddedChunks.push({
+          user_id: userId,
+          document_id: docId,
+          content: chunk.content,
+          chunk_index: chunk.index,
+          token_count: chunk.tokens,
+          embedding,
+          metadata: { source_type: 'url', source_url: postUrl, seeded: true, subreddit },
+        })
+      } catch (err) {
+        console.error(`    ✗ Embedding failed: ${err instanceof Error ? err.message : err}`)
+        embedFailed = true
+        break
+      }
+    }
+
+    if (embedFailed) {
+      await supabase.from('documents').update({ status: 'failed', error_message: 'Embedding error' }).eq('id', docId)
+      failCount++
+      continue
+    }
+
+    for (let i = 0; i < embeddedChunks.length; i += 50) {
+      const { error } = await supabase.from('chunks').insert(embeddedChunks.slice(i, i + 50))
+      if (error) {
+        console.error(`    ✗ Chunk insert error: ${error.message}`)
+        await supabase.from('documents').update({ status: 'failed', error_message: error.message }).eq('id', docId)
+        embedFailed = true
+        break
+      }
+    }
+
+    if (embedFailed) {
+      failCount++
+      continue
+    }
+
+    const chunkTokens = chunks.reduce((s, c) => s + c.tokens, 0)
+    await supabase.from('documents').update({
+      status: 'indexed',
+      chunk_count: chunks.length,
+      token_count: chunkTokens,
+    }).eq('id', docId)
+
+    totalTokens += chunkTokens
+    successCount++
+    console.log(`    ✓ "${String(post.title).slice(0, 55)}": ${chunks.length} chunks (~${chunkTokens} tok) [total ~${totalTokens}]`)
+
+    // Be polite to Reddit's API
+    await new Promise(r => setTimeout(r, 1000))
+  }
+
+  console.log(`\n  Summary: ${successCount} indexed, ${skipCount} skipped, ${failCount} failed`)
+  console.log(`  Total tokens: ~${totalTokens}`)
+}
 
 // ─── Main ────────────────────────────────────────────────────────────────────
 
@@ -590,22 +791,32 @@ async function main() {
     process.exit(1)
   }
 
-  // Tenant 1: AI Agents Student
-  console.log('\n📚 Tenant 1: AI Agents & Multi-Agent Systems')
+  // Tenant 1: Next.js Expert
+  console.log('\n📚 Tenant 1: Next.js App Router Documentation')
   console.log('   student@demo.com / demo123456')
   const studentId = await ensureUser('student@demo.com', 'demo123456')
-  await seedUserFromUrls(studentId, 'AI Agents & Multi-Agent Systems', AI_AGENTS_URLS)
+  await seedUserProfile(
+    studentId,
+    'Next.js App Router',
+    'You are a Next.js expert specialising in the App Router. Answer questions based strictly on the provided documentation context. Cite specific pages and sections, explain concepts clearly with code examples where relevant, and highlight best practices. If something is not covered in the documentation context, say so clearly.',
+  )
+  await seedUserFromUrls(studentId, 'Next.js App Router Documentation', NEXTJS_URLS)
 
-  // Tenant 2: Personal Finance Investor
-  console.log('\n📚 Tenant 2: Personal Finance & FIRE Movement')
-  console.log('   investor@demo.com / demo123456')
-  const investorId = await ensureUser('investor@demo.com', 'demo123456')
-  await seedUserFromUrls(investorId, 'Personal Finance & FIRE Movement', FINANCE_URLS)
+  // Tenant 2: Cooking for Beginners (r/cookingforbeginners)
+  console.log('\n📚 Tenant 2: Cooking for Beginners (r/cookingforbeginners)')
+  console.log('   cooking@demo.com / demo123456')
+  const investorId = await ensureUser('cooking@demo.com', 'demo123456')
+  await seedUserProfile(
+    investorId,
+    'Cooking for Beginners',
+    'You are a friendly cooking assistant for beginners, drawing on popular posts and community wisdom from r/cookingforbeginners. Answer questions based strictly on the provided context — give practical tips, explain techniques clearly, and suggest next steps. If something isn\'t covered in the knowledge base, say so and point the user toward what to search for.',
+  )
+  await seedRedditCommunity(investorId, COOKING_SUBREDDIT)
 
   console.log('\n✅ Seeding complete!\n')
   console.log('Demo credentials:')
-  console.log('  student@demo.com  / demo123456  → AI Agents & Multi-Agent Systems')
-  console.log('  investor@demo.com / demo123456  → Personal Finance & FIRE Movement\n')
+  console.log('  student@demo.com  / demo123456  → Next.js App Router Documentation')
+  console.log('  cooking@demo.com / demo123456  → Cooking for Beginners (r/cookingforbeginners)\n')
 }
 
 main().catch(err => {

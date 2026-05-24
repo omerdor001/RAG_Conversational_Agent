@@ -36,7 +36,7 @@ docker compose up
 | Account | Email | Password | Domain |
 |---------|-------|----------|--------|
 | AI Agents Student | `student@demo.com` | `demo123456` | LangChain, LangGraph, LlamaIndex, CrewAI, agentic AI |
-| Personal Finance | `investor@demo.com` | `demo123456` | FIRE movement, investing, budgeting, tax strategy |
+| Cooking for Beginners | `cooking@demo.com` | `demo123456` | Beginner cooking tips, techniques, recipes (r/cookingforbeginners) |
 
 ---
 
@@ -414,9 +414,9 @@ npm run seed
 ```
 
 This script:
-- Creates `student@demo.com` (AI Agents) and `investor@demo.com` (Personal Finance) via Supabase Auth
-- Fetches and scrapes 45 curated URLs from official docs and research blogs
-- Chunks, embeds, and indexes ~60-80k tokens of real content per user
+- Creates `student@demo.com` (Next.js) and `cooking@demo.com` (Cooking for Beginners) via Supabase Auth
+- Fetches Next.js docs URLs and popular posts from r/cookingforbeginners via Reddit's public JSON API
+- Chunks, embeds, and indexes ~50k tokens of real content per user
 - Is idempotent — reruns skip already-indexed URLs
 
 **Expected time:** 15-30 minutes (network + embedding speed dependent)

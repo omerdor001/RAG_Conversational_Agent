@@ -23,7 +23,7 @@ export async function POST(req: NextRequest) {
     const emails = data?.users?.map(u => u.email) || []
     return NextResponse.json({
       student_seeded: emails.includes('student@demo.com'),
-      investor_seeded: emails.includes('investor@demo.com'),
+      investor_seeded: emails.includes('cooking@demo.com'),
     })
   }
 
