@@ -1,6 +1,6 @@
 import { createClient } from '@supabase/supabase-js'
 import { chunkText } from '@/lib/rag/chunker'
-import { getEmbedding } from '@/lib/llm/provider'
+import { getEmbedding, getEmbeddingModelName } from '@/lib/llm/provider'
 import { parseFile, getFileType } from './document-parser'
 import { scrapeURL } from './url-scraper'
 import type { SourceType } from '@/lib/types'
@@ -86,6 +86,7 @@ export async function processDocument(params: ProcessDocumentParams): Promise<vo
             ...metadata,
             source_type: params.sourceType,
             source_url: params.sourceUrl || null,
+            embedding_model: getEmbeddingModelName(),
           },
           embedding: await getEmbedding(chunk.content),
         }))

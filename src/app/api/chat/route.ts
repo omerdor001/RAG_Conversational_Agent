@@ -34,7 +34,7 @@ export async function POST(req: Request) {
     .single()
 
   const topK = profile?.top_k ?? 4
-  const threshold = profile?.similarity_threshold ?? 0.5
+  const threshold = profile?.similarity_threshold ?? 0.3
   const baseSystemPrompt = profile?.system_prompt ?? 'You are a helpful assistant. Answer questions based only on the provided context. Always cite your sources.'
   const role = profile?.role ?? null
   const systemPrompt = role ? `${baseSystemPrompt}\n\nYou specialise in the domain of: ${role}.` : baseSystemPrompt
@@ -158,6 +158,7 @@ CITATION RULES:
   const readable = new ReadableStream({
     async start(controller) {
       let chunkCount = 0
+      let errored = false
       try {
         console.log('[chat/route] stream reader starting')
         const reader = result.textStream.getReader()
@@ -174,9 +175,10 @@ CITATION RULES:
         console.log('[chat/route] stream done — total chunks:', chunkCount)
       } catch (err) {
         console.error('[chat/route] stream error:', err)
+        errored = true
         controller.error(err)
       } finally {
-        controller.close()
+        if (!errored) controller.close()
       }
     },
   })

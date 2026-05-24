@@ -48,6 +48,30 @@ function StatusBadge({ status }: { status: Document['status'] }) {
 export function DocumentTable({ documents, onRefresh }: DocumentTableProps) {
   const [deleting, setDeleting] = useState<string | null>(null)
   const [reindexing, setReindexing] = useState<string | null>(null)
+  const [reindexingAll, setReindexingAll] = useState(false)
+
+  async function handleReindexAll() {
+    const indexed = documents.filter(d => d.status === 'indexed' || d.status === 'failed')
+    if (!indexed.length) return
+    setReindexingAll(true)
+    let failed = 0
+    for (const doc of indexed) {
+      try {
+        const res = await fetch(`/api/documents/${doc.id}`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ action: 'reindex' }),
+        })
+        if (!res.ok) failed++
+      } catch {
+        failed++
+      }
+    }
+    setReindexingAll(false)
+    onRefresh()
+    if (failed > 0) toast.error(`${failed} document(s) failed to re-index`)
+    else toast.success(`Re-indexed ${indexed.length} document(s)`)
+  }
 
   async function handleDelete(id: string) {
     setDeleting(id)
@@ -101,7 +125,19 @@ export function DocumentTable({ documents, onRefresh }: DocumentTableProps) {
             <th className="text-left px-4 py-3 text-xs text-slate-500 font-medium">Status</th>
             <th className="text-left px-4 py-3 text-xs text-slate-500 font-medium">Chunks</th>
             <th className="text-left px-4 py-3 text-xs text-slate-500 font-medium">Added</th>
-            <th className="px-4 py-3" />
+            <th className="px-4 py-3 text-right">
+              <Button
+                variant="ghost"
+                size="sm"
+                className="h-6 text-xs text-slate-500 hover:text-indigo-400 gap-1"
+                onClick={handleReindexAll}
+                disabled={reindexingAll}
+                title="Re-index all documents with the current embedding model. Use this after changing EMBED_PROVIDER."
+              >
+                <RefreshCw className={cn('w-3 h-3', reindexingAll && 'animate-spin')} />
+                Re-index all
+              </Button>
+            </th>
           </tr>
         </thead>
         <tbody className="divide-y divide-slate-800">

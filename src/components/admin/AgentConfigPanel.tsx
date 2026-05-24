@@ -1,8 +1,8 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { toast } from 'sonner'
-import { Save, RotateCcw, Loader2 } from 'lucide-react'
+import { Save, RotateCcw, Loader2, CheckCircle2, AlertCircle, Download } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
@@ -17,6 +17,14 @@ import {
   SelectValue,
 } from '@/components/ui/select'
 import type { Profile } from '@/lib/types'
+
+type PullStatus = 'checking' | 'pulling' | 'done' | 'error' | null
+
+interface PullState {
+  status: PullStatus
+  progress: number
+  text: string
+}
 
 const PERSONAS = [
   { value: 'helpful_assistant', label: 'Helpful Assistant', description: 'Friendly, balanced, professional' },
@@ -34,8 +42,17 @@ const PERSONA_PROMPTS: Record<string, string> = {
   professional: 'You are a professional consultant. Provide concise, actionable insights. Focus on practical recommendations and business value. Be formal and to the point.',
 }
 
-const OLLAMA_MODELS = ['llama3.2:3b', 'llama3.1:8b', 'mistral:7b', 'phi3:3.8b', 'gemma2:9b']
+const OLLAMA_MODELS = ['llama3.2:1b', 'llama3.2:3b', 'phi3:3.8b', 'llama3.1:8b', 'mistral:7b', 'gemma2:9b']
 const OPENAI_MODELS = ['gpt-4o-mini', 'gpt-4o', 'gpt-3.5-turbo']
+
+const OLLAMA_MODEL_HINTS: Record<string, { ram: string; badge: string; note?: string }> = {
+  'llama3.2:1b': { ram: '~0.8 GB', badge: 'CPU · Fastest', note: 'Keep max tokens ≤ 512 to avoid timeouts' },
+  'llama3.2:3b': { ram: '~2 GB',   badge: 'CPU · Fast' },
+  'phi3:3.8b':   { ram: '~2.5 GB', badge: 'CPU · Fast' },
+  'llama3.1:8b': { ram: '~5 GB',   badge: 'GPU recommended' },
+  'mistral:7b':  { ram: '~4.5 GB', badge: 'GPU recommended' },
+  'gemma2:9b':   { ram: '~6 GB',   badge: 'GPU recommended' },
+}
 
 type ConfigForm = Pick<Profile,
   | 'system_prompt' | 'temperature' | 'top_k' | 'similarity_threshold'
@@ -47,12 +64,12 @@ const DEFAULTS: ConfigForm = {
   system_prompt: 'You are a helpful assistant. Answer questions based only on the provided context. Always cite your sources.',
   temperature: 0.7,
   top_k: 7,
-  similarity_threshold: 0.5,
+  similarity_threshold: 0.3,
   role: null,
-  llm_model: 'llama3.2:3b',
+  llm_model: 'gpt-4o-mini',
   agent_persona: 'helpful_assistant',
-  llm_provider: 'ollama',
-  max_tokens: 2048,
+  llm_provider: 'openai',
+  max_tokens: 512,
   enable_citations: true,
   enable_streaming: true,
 }
@@ -100,6 +117,8 @@ export function AgentConfigPanel() {
   const [form, setForm] = useState<ConfigForm>(DEFAULTS)
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
+  const [pull, setPull] = useState<PullState>({ status: null, progress: 0, text: '' })
+  const abortRef = useRef<AbortController | null>(null)
 
   useEffect(() => {
     fetch('/api/config')
@@ -128,6 +147,93 @@ export function AgentConfigPanel() {
 
   function patch(updates: Partial<ConfigForm>) {
     setForm(prev => ({ ...prev, ...updates }))
+  }
+
+  async function handleModelChange(model: string, provider: string) {
+    patch({ llm_model: model })
+    if (provider !== 'ollama') return
+
+    // Cancel any in-flight pull
+    abortRef.current?.abort()
+    const abort = new AbortController()
+    abortRef.current = abort
+
+    // Check if model is already installed
+    setPull({ status: 'checking', progress: 0, text: 'Checking local models…' })
+    try {
+      const check = await fetch('/api/ollama/models', { signal: abort.signal })
+      const { models } = await check.json() as { models: string[] }
+      const tag = model.includes(':') ? model : `${model}:latest`
+      const installed = models.some(m => m === model || m === tag)
+      if (installed) {
+        setPull({ status: 'done', progress: 100, text: 'Model already installed' })
+        return
+      }
+    } catch {
+      if ((abort.signal as AbortSignal).aborted) return
+    }
+
+    // Pull the model via SSE
+    setPull({ status: 'pulling', progress: 0, text: 'Connecting to Ollama…' })
+    try {
+      const res = await fetch('/api/ollama/pull', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ model }),
+        signal: abort.signal,
+      })
+      if (!res.ok) {
+        const { error } = await res.json().catch(() => ({ error: 'Pull failed' }))
+        setPull({ status: 'error', progress: 0, text: error ?? 'Pull failed' })
+        return
+      }
+
+      const reader = res.body!.getReader()
+      const decoder = new TextDecoder()
+      let buffer = ''
+
+      while (true) {
+        const { done, value } = await reader.read()
+        if (done) break
+        buffer += decoder.decode(value, { stream: true })
+        const lines = buffer.split('\n')
+        buffer = lines.pop() ?? ''
+        for (const raw of lines) {
+          const line = raw.trim()
+          if (!line.startsWith('data:')) continue
+          const payload = line.slice(5).trim()
+          if (payload === '[DONE]') {
+            setPull({ status: 'done', progress: 100, text: 'Pull complete' })
+            return
+          }
+          try {
+            const evt = JSON.parse(payload) as {
+              status?: string
+              total?: number
+              completed?: number
+            }
+            if (evt.status === 'success') {
+              setPull({ status: 'done', progress: 100, text: 'Pull complete' })
+              return
+            }
+            if (evt.status === 'error') {
+              setPull({ status: 'error', progress: 0, text: 'Pull failed' })
+              return
+            }
+            const pct =
+              evt.total && evt.completed
+                ? Math.round((evt.completed / evt.total) * 100)
+                : pull.progress
+            setPull({ status: 'pulling', progress: pct, text: evt.status ?? 'Downloading…' })
+          } catch {
+            // ignore malformed lines
+          }
+        }
+      }
+    } catch (err) {
+      if ((err as Error).name === 'AbortError') return
+      setPull({ status: 'error', progress: 0, text: 'Connection lost' })
+    }
   }
 
   function applyPersona(persona: string) {
@@ -279,7 +385,13 @@ export function AgentConfigPanel() {
               <Label className="text-sm text-slate-300">Provider</Label>
               <Select
                 value={form.llm_provider}
-                onValueChange={(v) => { if (v) patch({ llm_provider: v, llm_model: v === 'openai' ? 'gpt-4o-mini' : 'llama3.2:3b' }) }}
+                onValueChange={(v) => {
+                  if (!v) return
+                  const defaultModel = v === 'openai' ? 'gpt-4o-mini' : 'llama3.2:3b'
+                  patch({ llm_provider: v, llm_model: defaultModel })
+                  setPull({ status: null, progress: 0, text: '' })
+                  if (v === 'ollama') handleModelChange(defaultModel, v)
+                }}
               >
                 <SelectTrigger className="bg-slate-800 border-slate-700 text-white w-full">
                   <SelectValue />
@@ -296,20 +408,83 @@ export function AgentConfigPanel() {
               <Label className="text-sm text-slate-300">Model</Label>
               <Select
                 value={form.llm_model}
-                onValueChange={(v) => { if (v) patch({ llm_model: v }) }}
+                onValueChange={(v) => { if (v) handleModelChange(v, form.llm_provider) }}
               >
                 <SelectTrigger className="bg-slate-800 border-slate-700 text-white w-full">
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
-                  {modelOptions.map(m => (
-                    <SelectItem key={m} value={m}>{m}</SelectItem>
-                  ))}
+                  {modelOptions.map(m => {
+                    const hint = OLLAMA_MODEL_HINTS[m]
+                    return (
+                      <SelectItem key={m} value={m}>
+                        <span className="flex items-center gap-2">
+                          {m}
+                          {hint && (
+                            <span className="text-xs text-slate-400 font-normal">{hint.ram} · {hint.badge}</span>
+                          )}
+                        </span>
+                      </SelectItem>
+                    )
+                  })}
                 </SelectContent>
               </Select>
+              {form.llm_provider === 'ollama' && (() => {
+                const hint = OLLAMA_MODEL_HINTS[form.llm_model]
+                if (!hint) return null
+                return (
+                  <div className="text-xs text-slate-400 flex flex-wrap gap-x-3 gap-y-0.5">
+                    <span>RAM: <span className="text-slate-300">{hint.ram}</span></span>
+                    <span className="text-slate-500">·</span>
+                    <span className="text-slate-300">{hint.badge}</span>
+                    {hint.note && <span className="text-amber-400 w-full">{hint.note}</span>}
+                  </div>
+                )
+              })()}
+              {form.llm_provider === 'ollama' &&
+               (form.llm_model === 'llama3.2:1b' || form.llm_model === 'llama3.2:3b' || form.llm_model === 'phi3:3.8b') &&
+               form.max_tokens > 512 && (
+                <p className="text-xs text-amber-400">
+                  ⚠ Small CPU model with max tokens {form.max_tokens.toLocaleString()} may cause generation timeouts. Consider reducing to 256–512.
+                </p>
+              )}
               <p className="text-xs text-slate-500">Overrides <code className="text-indigo-400">OLLAMA_LLM_MODEL</code> / <code className="text-indigo-400">OPENAI_LLM_MODEL</code>.</p>
             </div>
           </div>
+
+          {/* Pull progress — only shown for Ollama */}
+          {form.llm_provider === 'ollama' && pull.status && (
+            <div className="rounded-lg border border-slate-700 bg-slate-800/40 px-4 py-3 space-y-2">
+              <div className="flex items-center gap-2 text-xs">
+                {pull.status === 'checking' && <Loader2 className="w-3.5 h-3.5 animate-spin text-slate-400 shrink-0" />}
+                {pull.status === 'pulling' && <Download className="w-3.5 h-3.5 text-indigo-400 shrink-0" />}
+                {pull.status === 'done' && <CheckCircle2 className="w-3.5 h-3.5 text-green-400 shrink-0" />}
+                {pull.status === 'error' && <AlertCircle className="w-3.5 h-3.5 text-red-400 shrink-0" />}
+                <span className={
+                  pull.status === 'done' ? 'text-green-400' :
+                  pull.status === 'error' ? 'text-red-400' :
+                  'text-slate-300'
+                }>
+                  {pull.text}
+                </span>
+                {pull.status === 'pulling' && pull.progress > 0 && (
+                  <span className="ml-auto font-mono text-indigo-400">{pull.progress}%</span>
+                )}
+              </div>
+              {pull.status === 'pulling' && (
+                <div className="h-1 rounded-full bg-slate-700 overflow-hidden">
+                  {pull.progress > 0 ? (
+                    <div
+                      className="h-full bg-indigo-500 transition-all duration-300"
+                      style={{ width: `${pull.progress}%` }}
+                    />
+                  ) : (
+                    <div className="h-full bg-indigo-500 animate-pulse w-full" />
+                  )}
+                </div>
+              )}
+            </div>
+          )}
 
           <RangeInput
             label="Temperature"
