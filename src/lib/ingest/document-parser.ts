@@ -1,16 +1,12 @@
 // Parses various document formats into plain text
 
 export async function parsePDF(buffer: Buffer): Promise<string> {
-  // pdf-parse v2 uses a class-based API: new PDFParse({ data }) → .getText()
+  // pdf-parse v1 uses pdfjs-dist v2 which has no DOMMatrix/browser-API dependency
+  // v2 of pdf-parse requires pdfjs-dist v5 which breaks on Vercel's Node.js 18/20 runtime
   // eslint-disable-next-line @typescript-eslint/no-require-imports, @typescript-eslint/no-explicit-any
-  const { PDFParse } = require('pdf-parse') as { PDFParse: new (opts: { data: Uint8Array }) => any }
-  const parser = new PDFParse({ data: new Uint8Array(buffer) })
-  try {
-    const result = await parser.getText()
-    return result.text as string
-  } finally {
-    await parser.destroy().catch(() => {})
-  }
+  const pdfParse = require('pdf-parse') as (buf: Buffer) => Promise<{ text: string }>
+  const result = await pdfParse(buffer)
+  return result.text
 }
 
 export async function parseDOCX(buffer: Buffer): Promise<string> {
