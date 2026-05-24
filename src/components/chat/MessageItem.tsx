@@ -144,9 +144,6 @@ function SourceIcon({ type }: { type: string }) {
 }
 
 function CitationCard({ citation }: { citation: Citation }) {
-  const confidence = Math.round(citation.similarity * 100)
-  const confidenceColor = confidence >= 85 ? 'text-green-400' : confidence >= 70 ? 'text-yellow-400' : 'text-orange-400'
-
   return (
     <div className="rounded-lg border border-slate-700 bg-slate-800/50 p-3 space-y-2">
       <div className="flex items-center justify-between gap-2">
@@ -154,14 +151,11 @@ function CitationCard({ citation }: { citation: Citation }) {
           <SourceIcon type={citation.source_type} />
           <span className="truncate font-medium text-slate-300">{citation.document_title}</span>
         </div>
-        <div className="flex items-center gap-2 flex-shrink-0">
-          <span className={cn('text-xs font-mono', confidenceColor)}>{confidence}%</span>
-          {citation.source_url && (
-            <a href={citation.source_url} target="_blank" rel="noopener noreferrer" className="text-slate-500 hover:text-slate-300">
-              <ExternalLink className="w-3 h-3" />
-            </a>
-          )}
-        </div>
+        {citation.source_url && (
+          <a href={citation.source_url} target="_blank" rel="noopener noreferrer" className="text-slate-500 hover:text-slate-300 flex-shrink-0">
+            <ExternalLink className="w-3 h-3" />
+          </a>
+        )}
       </div>
       <p className="text-xs text-slate-500 leading-relaxed line-clamp-3">{citation.content_snippet}</p>
     </div>

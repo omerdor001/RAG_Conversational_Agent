@@ -100,29 +100,45 @@ export function ChatInterface({ userId, userEmail, isEmbedded = false }: ChatInt
         throw new Error(text || `HTTP ${res.status}`)
       }
 
-      try {
-        const cits = JSON.parse(decodeURIComponent(res.headers.get('X-Citations') || '[]')) as Citation[]
-        const recs = JSON.parse(decodeURIComponent(res.headers.get('X-Recommendations') || '[]')) as Recommendation[]
-        const oos = res.headers.get('X-Out-Of-Scope') === 'true'
-        setCitationsMap(prev => ({ ...prev, [assistantId]: cits }))
-        setRecommendationsMap(prev => ({ ...prev, [assistantId]: recs }))
-        if (oos) setOutOfScopeMap(prev => ({ ...prev, [assistantId]: true }))
-      } catch (e) { console.warn('[ChatInterface] header parse error:', e) }
-
       const reader = res.body!.getReader()
       const decoder = new TextDecoder()
-      let fullText = ''
+      const SENTINEL = '\x1e'
+      let rawBuffer = ''
+      let metaExtracted = false
+      let metaOffset = 0
 
       while (true) {
         const { done, value } = await reader.read()
         if (done) break
-        const chunk = decoder.decode(value, { stream: true })
-        fullText += chunk
-        const snapshot = fullText
-        setMessages(prev =>
-          prev.map(m => m.id === assistantId ? { ...m, content: snapshot } : m)
-        )
+        rawBuffer += decoder.decode(value, { stream: true })
+
+        if (!metaExtracted) {
+          if (rawBuffer.startsWith(SENTINEL)) {
+            const closeIdx = rawBuffer.indexOf(SENTINEL, 1)
+            if (closeIdx !== -1) {
+              try {
+                const meta = JSON.parse(rawBuffer.slice(1, closeIdx))
+                setCitationsMap(prev => ({ ...prev, [assistantId]: meta.citations ?? [] }))
+                setRecommendationsMap(prev => ({ ...prev, [assistantId]: meta.recommendations ?? [] }))
+                if (meta.outOfScope) setOutOfScopeMap(prev => ({ ...prev, [assistantId]: true }))
+              } catch (e) { console.warn('[ChatInterface] meta parse error:', e) }
+              metaOffset = closeIdx + 1
+              metaExtracted = true
+            }
+          } else if (rawBuffer.length > 0) {
+            metaExtracted = true
+          }
+        }
+
+        if (metaExtracted) {
+          const snapshot = rawBuffer.slice(metaOffset)
+          setMessages(prev =>
+            prev.map(m => m.id === assistantId ? { ...m, content: snapshot } : m)
+          )
+        }
       }
+
+      const fullText = rawBuffer.slice(metaOffset)
 
       // If the LLM self-reported out-of-scope (chunks were retrieved but didn't answer the question),
       // drop the spurious citations that were computed before streaming started.

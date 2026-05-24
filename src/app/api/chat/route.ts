@@ -148,13 +148,18 @@ CITATION RULES:
     },
   })
 
-  // Manually wrap the AI SDK text stream to avoid buffering / stream-close issues
-  // that occur with toTextStreamResponse() + Ollama's compatibility mode.
+  // Embed metadata as the first chunk using record-separator sentinels (\x1e).
+  // Custom response headers are stripped by Vercel on streaming responses,
+  // so we inline citations/recommendations/outOfScope into the body instead.
+  const SENTINEL = '\x1e'
+  const metaChunk = `${SENTINEL}${JSON.stringify({ citations, recommendations, outOfScope })}${SENTINEL}`
+
   const encoder = new TextEncoder()
   const readable = new ReadableStream({
     async start(controller) {
       let errored = false
       try {
+        controller.enqueue(encoder.encode(metaChunk))
         const reader = result.textStream.getReader()
         while (true) {
           const { done, value } = await reader.read()
@@ -177,9 +182,6 @@ CITATION RULES:
       'Content-Type': 'text/plain; charset=utf-8',
       'Cache-Control': 'no-cache, no-transform',
       'X-Accel-Buffering': 'no',
-      'X-Citations': encodeURIComponent(JSON.stringify(citations)),
-      'X-Recommendations': encodeURIComponent(JSON.stringify(recommendations)),
-      'X-Out-Of-Scope': outOfScope ? 'true' : 'false',
     },
   })
 }
