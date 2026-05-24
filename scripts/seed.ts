@@ -28,7 +28,9 @@ config({ path: resolve(process.cwd(), '.env') })
 const SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL!
 const SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY!
 const DATABASE_URL = process.env.DATABASE_URL || ''
-const LLM_PROVIDER = process.env.LLM_PROVIDER || 'ollama'
+const LLM_PROVIDER = process.env.LLM_PROVIDER || 'openai'
+// EMBED_PROVIDER can differ from LLM_PROVIDER — must match what the app uses at query time
+const EMBED_PROVIDER = process.env.EMBED_PROVIDER || LLM_PROVIDER
 const OLLAMA_BASE_URL = process.env.OLLAMA_BASE_URL || 'http://localhost:11434'
 const OLLAMA_EMBED_MODEL = process.env.OLLAMA_EMBED_MODEL || 'nomic-embed-text'
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY || ''
@@ -86,11 +88,14 @@ function chunkText(text: string): Array<{ content: string; index: number; tokens
 
 async function getEmbedding(text: string): Promise<number[]> {
   const clean = text.replace(/\n/g, ' ').trim()
-  if (LLM_PROVIDER === 'openai') {
+  if (EMBED_PROVIDER === 'openai') {
+    const body: Record<string, unknown> = { model: OPENAI_EMBED_MODEL, input: clean }
+    // dimensions param only supported by text-embedding-3-* models
+    if (OPENAI_EMBED_MODEL.startsWith('text-embedding-3')) body.dimensions = 768
     const res = await fetch('https://api.openai.com/v1/embeddings', {
       method: 'POST',
       headers: { Authorization: `Bearer ${OPENAI_API_KEY}`, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ model: OPENAI_EMBED_MODEL, input: clean, dimensions: 384 }),
+      body: JSON.stringify(body),
     })
     if (!res.ok) throw new Error(`OpenAI embed error: ${await res.text()}`)
     const data = await res.json()
@@ -776,7 +781,8 @@ async function seedRedditCommunity(userId: string, subreddit: string): Promise<v
 
 async function main() {
   console.log('\n🌱 RAG Agent — Seeding demo accounts\n')
-  console.log(`Provider: ${LLM_PROVIDER}`)
+  console.log(`LLM provider: ${LLM_PROVIDER}`)
+  console.log(`Embed provider: ${EMBED_PROVIDER}`)
 
   await ensureSchema()
 

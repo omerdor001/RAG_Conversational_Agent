@@ -40,6 +40,63 @@ docker compose up
 
 ---
 
+## Knowledge Bases
+
+### Why these two domains?
+
+The domains were chosen to be maximally distinguishable — a reviewer can immediately tell whether cross-tenant isolation is working because the same question produces completely different results (or explicit "I don't know") across the two accounts.
+
+| Criterion | Next.js App Router docs | r/cookingforbeginners |
+|-----------|------------------------|-----------------------|
+| **Content type** | Official technical documentation | Community Q&A / discussion posts |
+| **Vocabulary** | Framework-specific (`middleware`, `RSC`, `revalidatePath`) | Culinary (`mise en place`, `fond`, `caramelise`) |
+| **Overlap risk** | Near-zero — no cooking terms in Next.js docs | Near-zero — no web framework terms in cooking posts |
+| **Token volume** | ~30 pages × ~1–2k tokens each ≈ 50k+ tokens | Top/hot posts + top comments until 50k token target |
+| **Retrieval challenge** | Exact API lookups + conceptual explanations | Practical how-to questions with community nuance |
+
+---
+
+### Knowledge Base 1 — Next.js App Router Documentation (`student@demo.com`)
+
+**Source:** Official [nextjs.org/docs/app](https://nextjs.org/docs/app) pages, scraped directly.
+
+**Why Next.js documentation?**
+- It is a real, stable, publicly available corpus — no synthetic or low-quality content.
+- App Router introduced breaking API changes over Pages Router, so retrieval has genuine value: a developer asking "how do I fetch data?" needs a grounded answer, not a hallucination mixing old and new APIs.
+- The content is dense with code examples and cross-references, which exercises citation quality and chunking strategy.
+- Queries are naturally precise ("what does `use server` do?") making it easy to verify retrieval correctness.
+
+**Content coverage (~30 pages):**
+- Getting Started: installation, project structure, layouts/pages, linking/navigating, Server & Client Components, data fetching, mutations, caching, error handling, deploying
+- Guides: authentication, environment variables, forms, redirects, streaming, self-hosting, production checklist, static exports
+- API Reference: `<Image>`, `<Link>`, file conventions (`layout`, `page`, `route`, `error`, dynamic routes), core functions (`cookies`, `headers`, `redirect`, `useRouter`, `revalidatePath`)
+
+**Agent persona:** "You are a Next.js expert specialising in the App Router. Answer questions based strictly on the provided documentation context, cite specific pages and sections, explain concepts with code examples where relevant."
+
+---
+
+### Knowledge Base 2 — Cooking for Beginners (`cooking@demo.com`)
+
+**Source:** Top-all-time and hot posts from [r/cookingforbeginners](https://www.reddit.com/r/cookingforbeginners/) via Reddit's public JSON API, enriched with the top 12 upvoted comments per post.
+
+**Why r/cookingforbeginners?**
+- Community-driven content captures the kind of practical, experience-backed knowledge that formal recipes miss: why a technique works, common beginner mistakes, equipment substitutions, shopping tips.
+- The conversational tone means queries like "my onions never brown right" or "how do I not ruin pasta" have genuinely useful answers in the corpus — realistic use-case testing.
+- Posts and comments together create multi-perspective documents: one post may contain 5 different users explaining the same technique, giving the retriever rich signal for nuanced queries.
+- Reddit's public JSON API requires no authentication and is rate-limit friendly, keeping the seed script simple and reproducible.
+
+**Content coverage (~50k tokens):**
+- Knife skills, heat control, seasoning fundamentals
+- Common beginner mistakes (overcrowding pans, not patting meat dry, oversalting)
+- Equipment basics (when a cast iron matters, pan types, essential vs. luxury tools)
+- Ingredient handling (garlic, onions, stock, pasta water, fats)
+- Practical questions ("what to cook first", "how to read a recipe", "pantry staples")
+- Community Q&A enriched with upvoted replies providing multiple angles on each topic
+
+**Agent persona:** "You are a friendly cooking assistant for beginners, drawing on popular posts and community wisdom from r/cookingforbeginners. Give practical tips, explain techniques clearly, and suggest next steps."
+
+---
+
 ## LLM Provider Choice
 
 > **OpenAI is the default** — and intentionally so.

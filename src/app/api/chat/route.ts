@@ -79,12 +79,12 @@ export async function POST(req: Request) {
       recommendations = await retrieveRecommendations(query, user.id, excludeIds, 3, queryEmbedding)
     } else {
       outOfScope = true
-      noResultsNote = '\n\n[RETRIEVAL RESULT: No chunks from the knowledge base matched this query.]\n\nYou are now answering from your general training knowledge (not the KB). You MUST begin your response with exactly this line:\n"💡 This answer is from my general knowledge — not your knowledge base. To get KB-grounded answers, add relevant documents in the Admin panel."\n\nCRITICAL: Do NOT include any citation numbers [1], source references, or URLs — there are no knowledge base sources to cite. Fabricating citations is forbidden.\n\nThen provide a genuinely helpful, accurate response to the user\'s question.'
+      noResultsNote = '\n\n[RETRIEVAL RESULT: No relevant documents found in the knowledge base for this query.]\n\nYou MUST NOT answer from general knowledge or training data. Instead:\n1. Politely acknowledge that this specific topic is not covered in the current knowledge base.\n2. Based on your domain context (system prompt / role), briefly describe what topics the knowledge base DOES cover.\n3. Suggest 1-2 concrete, in-scope questions the user could ask instead.\n\nKeep the response concise (2-4 sentences). Do NOT include citation numbers, URLs, or fabricated sources.'
     }
   } catch (err) {
     console.error('Retrieval error:', err)
     outOfScope = true
-    noResultsNote = '\n\n[RETRIEVAL FAILED: The knowledge base could not be searched due to a technical error.]\n\nYou are answering from general knowledge. Begin your response with:\n"⚠️ The knowledge base is temporarily unavailable. Answering from general knowledge."\n\nCRITICAL: Do NOT include any citation numbers [1], source references, or URLs. Fabricating citations is forbidden.\n\nThen provide a helpful response.'
+    noResultsNote = '\n\n[RETRIEVAL FAILED: The knowledge base could not be searched due to a technical error.]\n\nDo NOT answer from general knowledge. Begin your response with:\n"⚠️ The knowledge base is temporarily unavailable — please try again in a moment."\n\nDo NOT include citation numbers, URLs, or fabricated sources.'
   }
 
   const groundingRules = `
@@ -100,7 +100,7 @@ CITATION RULES:
   // the model can fall back to general knowledge as instructed by noResultsNote.
   const fullSystem = contextText
     ? `${systemPrompt}\n\nKNOWLEDGE BASE CONTEXT:\n${contextText}${groundingRules}`
-    : `You are a helpful assistant.${noResultsNote}`
+    : `${systemPrompt}${noResultsNote}`
 
   // Save user message immediately so it's never lost if the client disconnects mid-stream.
   // Skip when isRetry=true — the user message is already in the DB from the original request.
