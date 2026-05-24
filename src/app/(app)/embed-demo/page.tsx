@@ -2,7 +2,7 @@ import { Bot, Code2, Globe, FileText, LayoutDashboard } from 'lucide-react'
 
 export default function EmbedDemoPage() {
   const iframeSnippet = `<iframe
-  src="https://your-app.vercel.app/chat?embed=true"
+  src="https://rag-conversational-agent.vercel.app/chat?embed=true"
   width="100%"
   height="600px"
   frameborder="0"
@@ -11,7 +11,7 @@ export default function EmbedDemoPage() {
 ></iframe>`
 
   const floatingSnippet = `<iframe
-  src="https://your-app.vercel.app/chat?embed=true"
+  src="https://rag-conversational-agent.vercel.app/chat?embed=true"
   style="
     position: fixed;
     bottom: 20px; right: 20px;

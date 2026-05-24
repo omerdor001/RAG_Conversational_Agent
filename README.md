@@ -2,7 +2,7 @@
 
 A production-ready, multi-tenant Retrieval-Augmented Generation (RAG) system built with Next.js, Supabase, and Ollama/OpenAI. Two pre-seeded demo accounts with distinct knowledge bases are included for immediate exploration.
 
-**Live Demo:** [https://rag-agent-system.vercel.app](https://rag-agent-system.vercel.app) *(add your Vercel URL here)*
+**Live Demo:** [https://rag-conversational-agent.vercel.app](https://rag-conversational-agent.vercel.app)
 
 ---
 
@@ -24,7 +24,7 @@ cp .env.example .env
 
 docker compose up
 # → Pulls ollama/ollama image, builds the Next.js image
-# → On first run: downloads llama3.2:3b (~2GB) and all-minilm (~100MB)
+# → On first run: downloads llama3.2:3b (~2GB) and nomic-embed-text (~300MB)
 # → Seeds demo accounts in the background (watch with: docker compose logs -f app)
 # → App is live at http://localhost:3000
 ```
@@ -35,8 +35,23 @@ docker compose up
 
 | Account | Email | Password | Domain |
 |---------|-------|----------|--------|
-| AI Agents Student | `student@demo.com` | `demo123456` | LangChain, LangGraph, LlamaIndex, CrewAI, agentic AI |
+| Next.js App Router | `student@demo.com` | `demo123456` | Next.js App Router docs — routing, data fetching, rendering, API routes |
 | Cooking for Beginners | `cooking@demo.com` | `demo123456` | Beginner cooking tips, techniques, recipes (r/cookingforbeginners) |
+
+---
+
+## LLM Provider Choice
+
+> **OpenAI is the default** — and intentionally so.
+
+| Provider | Local dev | Vercel (production) | Cost |
+|----------|-----------|---------------------|------|
+| **OpenAI** (default) | ✅ Works | ✅ Works | ~$0.15/1M tokens |
+| **Ollama** | ✅ Works | ❌ Not supported | Free |
+
+Ollama requires a persistent local process and is **incompatible with Vercel's serverless environment** — functions are stateless and cannot reach a locally running Ollama daemon. OpenAI works in both contexts, making it the right default for a system that is developed locally and deployed on Vercel.
+
+Use Ollama only if you are running the app **exclusively via Docker locally** and do not intend to deploy to Vercel.
 
 ---
 
@@ -51,15 +66,19 @@ docker compose up
 NEXT_PUBLIC_SUPABASE_URL=https://your-project.supabase.co
 NEXT_PUBLIC_SUPABASE_ANON_KEY=eyJ...
 SUPABASE_SERVICE_ROLE_KEY=eyJ...   # Server-only admin key for seeding
+DATABASE_URL=postgresql://...      # Optional: for auto-migrations via seed script
 
-# LLM Provider
-LLM_PROVIDER=ollama                # "ollama" (default, free) | "openai" (cloud)
+# LLM Provider — OpenAI is the default (works locally AND on Vercel)
+# Use "ollama" only for local Docker runs — Ollama cannot run on Vercel serverless
+LLM_PROVIDER=openai                # "openai" (default) | "ollama" (local Docker only)
+EMBED_PROVIDER=                    # Optional: decouple embedding provider from LLM provider
 
 # Ollama — set automatically in Docker (http://ollama:11434)
 # Override only for manual local setup
 OLLAMA_BASE_URL=http://localhost:11434
 OLLAMA_LLM_MODEL=llama3.2:3b
-OLLAMA_EMBED_MODEL=all-minilm
+OLLAMA_EMBED_MODEL=nomic-embed-text
+OLLAMA_VISION_MODEL=llava:7b       # Optional: enables image ingestion
 
 # OpenAI — only needed when LLM_PROVIDER=openai
 OPENAI_API_KEY=sk-...
@@ -68,6 +87,9 @@ OPENAI_EMBED_MODEL=text-embedding-3-small
 
 # Seed endpoint protection (any random string)
 SEED_SECRET=your-secret-here
+
+# Optional: Jina Reader API key for JS-rendered site fallback during URL scraping
+JINA_API_KEY=
 ```
 
 ---
@@ -97,7 +119,7 @@ SEED_SECRET=your-secret-here
   │  Ollama or   │   │  ┌─────────────┐  ┌──────────────┐ │
   │  OpenAI      │   │  │  pgvector   │  │  PostgreSQL  │ │
   │              │   │  │  (chunks)   │  │  (documents, │ │
-  │  Streaming   │   │  │  IVFFlat    │  │  messages,   │ │
+  │  Streaming   │   │  │  HNSW       │  │  messages,   │ │
   │  responses   │   │  │  cosine     │  │  profiles)   │ │
   └──────────────┘   │  └─────────────┘  └──────────────┘ │
                      │                                       │
@@ -116,32 +138,32 @@ User Query
     │
     ▼
 ┌─────────────────┐
-│  Embed Query    │  nomic-embed-text (384-dim) or text-embedding-3-small
+│  Embed Query    │  nomic-embed-text (768-dim) or text-embedding-3-small
 └────────┬────────┘
          │
          ▼
 ┌─────────────────┐
-│ Vector Search   │  match_chunks() SQL function
-│ (pgvector)      │  WHERE user_id = auth.uid()   ← RLS enforcement
-│ top_k=7         │  threshold=0.72, cosine sim
+│ Hybrid Search   │  hybrid_search() SQL function (70% vector + 30% keyword)
+│ (pgvector +     │  WHERE user_id = auth.uid()   ← RLS enforcement
+│  full-text)     │  top_k=7, threshold=0.3, cosine sim
 └────────┬────────┘
          │
          ▼
 ┌─────────────────┐
 │ Context Assembly│  Format: "[Source N: doc_title]\n{chunk_content}"
-│ + Citations     │  Ordered by similarity score
+│ + Citations     │  Ordered by similarity score, deduped by document_id
 └────────┬────────┘
          │
          ▼
 ┌─────────────────┐
 │  LLM Inference  │  System prompt enforces grounding
-│  (Streaming)    │  max_tokens=2048, temp=0.7
+│  (Streaming)    │  max_tokens configurable (512 default), temp configurable
 └────────┬────────┘
          │
          ▼
 ┌─────────────────┐
 │ Recommendations │  recommend_chunks() excludes already-cited docs
-│ (Parallel)      │  Returns 3 related document suggestions
+│ (Parallel)      │  threshold=0.40, returns 3 related document suggestions
 └────────┬────────┘
          │
          ▼
@@ -155,16 +177,16 @@ Stream response + X-Citations header + X-Recommendations header
 ### Embedding Model
 
 **Choice:** `nomic-embed-text` (Ollama) / `text-embedding-3-small` (OpenAI)
-**Dimensions:** 384
+**Dimensions:** 768
 
 **Rationale:**
-- `nomic-embed-text` produces 768-dim vectors which we project to 384 — excellent quality/cost tradeoff at zero cost locally
-- `text-embedding-3-small` at 384 dimensions via OpenAI's Matryoshka reduction gives near-equivalent quality to ada-002 at 5x lower cost
-- 384 dimensions reduces storage (vs 1536) while maintaining good semantic discrimination
-- IVFFlat index performs well at this dimensionality with small-medium datasets
+- `nomic-embed-text` produces native 768-dim vectors — strong semantic quality with 8192-token context window at zero cost locally
+- `text-embedding-3-small` at 768 dimensions via OpenAI gives near-equivalent quality to ada-002 at lower cost
+- 768 dimensions provides better semantic discrimination than 384 without the storage overhead of 1536
+- HNSW index performs efficiently at this dimensionality across small-to-large datasets
 
 **Alternatives considered:**
-- `all-MiniLM-L6-v2` (384-dim, faster but weaker on domain knowledge)
+- `all-MiniLM-L6-v2` (384-dim, faster but weaker domain knowledge)
 - `text-embedding-ada-002` (1536-dim, costlier, no improvement at this scale)
 - BAAI/bge-small-en (384-dim, strong alternative but less available in Ollama)
 
@@ -174,17 +196,21 @@ Stream response + X-Citations header + X-Recommendations header
 
 ### LLM Configuration
 
-**Choice:** `llama3.2` (Ollama) / `gpt-4o-mini` (OpenAI)
-**Temperature:** 0.7 (balanced factuality vs natural language flow)
-**Max tokens:** 2048
+**Default:** `gpt-4o-mini` (OpenAI) — works locally and on Vercel
+**Alternative:** `llama3.2:3b` (Ollama) — local Docker only, free
+**Temperature:** Configurable per user profile
+**Max tokens:** Configurable per user profile (512 default)
+
+**Why OpenAI is the default:**
+Vercel's serverless functions are stateless — they cannot reach a locally running Ollama process. OpenAI is an external HTTP API that works identically in local dev, Docker, and Vercel production. Ollama is offered as an alternative for cost-free local-only setups via Docker.
 
 **Rationale:**
-- `llama3.2` (3B) runs comfortably on consumer hardware with 4-8GB RAM, adequate context for RAG (8192 tokens)
-- `gpt-4o-mini` gives production-grade quality at ~$0.15/1M tokens — cost-effective for demos
-- Temperature 0.7: low enough to stay grounded in retrieved context, high enough to avoid robotic phrasing
-- 2048 output tokens: sufficient for detailed explanations + citations without hitting context limits
+- `gpt-4o-mini` gives production-grade quality at ~$0.15/1M tokens — cost-effective for cloud deployment and demo use
+- `llama3.2:3b` runs comfortably on consumer hardware with 4-8GB RAM, adequate context for RAG (8192 tokens)
+- Temperature is user-configurable so tenants can tune for their domain (factual vs. creative)
+- 512 output tokens is the conservative default; users can raise it for longer answers
 
-**Streaming implementation:** Vercel AI SDK `streamText()` → `toTextStreamResponse()`. Citations and recommendations are sent as custom response headers (`X-Citations`, `X-Recommendations`) before the body stream begins, enabling the client to render citations immediately.
+**Streaming implementation:** Vercel AI SDK `streamText()` → `ReadableStream` as `text/plain`. Citations and recommendations are sent as custom response headers (`X-Citations`, `X-Recommendations`, `X-Out-Of-Scope`) before the body stream begins, enabling the client to render citations immediately.
 
 **Function calling:** Not used for v1 — direct prompting with context injection is simpler and adequate. Would add tool use for multi-hop reasoning at v2.
 
@@ -192,64 +218,67 @@ Stream response + X-Citations header + X-Recommendations header
 
 ### Chunking Strategy
 
-**Method:** Semantic boundary chunking (paragraph-aware)
-**Target size:** 400 tokens
+**Method:** Semantic boundary chunking (paragraph-aware, then sentence-level fallback)
+**Target size:** 300 tokens
 **Overlap:** 20 tokens
 **Tokenizer:** Approximation (~4 chars/token, cl100k_base compatible)
 
 **Rationale:**
 - Paragraph boundaries preserve semantic coherence — a chunk never cuts mid-sentence or mid-idea
-- 400 tokens gives enough context for the LLM to understand each chunk independently
-- 20-token overlap ensures no information is lost at chunk boundaries
-- This range (300-500 tokens) consistently outperforms both smaller (too little context) and larger (too much noise) chunks in retrieval precision
+- 300 tokens gives enough context for the LLM to understand each chunk independently while keeping retrieval precise
+- 20-token overlap (~80 chars, word-boundary aware) ensures no information is lost at chunk boundaries
+- This range (250-350 tokens) consistently outperforms both smaller (too little context) and larger (too much noise) chunks in retrieval precision
 
 **Special cases:**
 - **PDFs:** pdf-parse extracts text with layout; double newlines signal paragraph boundaries
 - **DOCX:** mammoth converts to plain text preserving paragraph structure
 - **CSV:** Converted to prose format ("Column: value") before chunking — tabular data chunked as rows
-- **Code:** Treated as text; future v2 would use tree-sitter AST boundaries
-- **Images:** Passed through vision LLM to generate a text description, then chunked normally
-- **URLs:** Scraped with cheerio, boilerplate stripped (nav, ads, footers), semantic boundaries detected
+- **TXT/MD:** UTF-8 decoded directly
+- **Images:** Vision LLM (llava:7b) generates a text description, then chunked normally
+- **URLs:** Scraped with cheerio, boilerplate stripped (nav, ads, footers); Jina Reader fallback for JS-rendered pages
 
 ---
 
 ### Retrieval Pipeline
 
-**Method:** Single-stage semantic retrieval
-**top_k:** 7
-**Similarity threshold:** 0.72 (cosine)
+**Method:** Hybrid search (semantic vector + full-text keyword, 70%/30% weighted)
+**top_k:** 7 (configurable per user profile)
+**Similarity threshold:** 0.3 (configurable per user profile, lowered for better recall)
+**Recommendation threshold:** 0.40 (hardcoded floor in SQL function)
 **Metric:** Cosine similarity (normalized dot product)
 **Reranking:** None (v1)
 
 **Rationale:**
-- top_k=7 balances context richness (enough evidence for good answers) vs prompt bloat (too many chunks dilute signal)
-- Threshold 0.72 eliminates clearly irrelevant results while being permissive enough for varied phrasings
+- Hybrid search combines semantic understanding (vector) with keyword precision (tsvector/tsquery) — reduces missed retrievals for exact-term queries
+- top_k=7 balances context richness vs prompt bloat
+- Threshold 0.3 is deliberately permissive — the LLM prompt instructs grounding so low-similarity noise doesn't hallucinate answers
 - Cosine similarity is superior to L2 distance for semantic search — magnitude-independent
-- Single-stage is sufficient for this dataset size; two-stage (retrieve 20 → rerank to 7) would add value at 100K+ documents
+- Single-stage retrieval is sufficient for this dataset size; two-stage (retrieve 20 → rerank to 7) would add value at 100K+ documents
 
-**Ambiguous queries:** System prompt instructs the LLM to acknowledge uncertainty and ask clarifying questions rather than hallucinate
+**Ambiguous queries:** System prompt instructs the LLM to acknowledge uncertainty and ask clarifying questions rather than hallucinate.
 
-**Multi-hop:** Not explicitly supported in v1 — the LLM can synthesize across multiple retrieved chunks but doesn't decompose queries. Future: LangGraph-style agentic retrieval loop.
+**Multi-hop:** Not explicitly supported in v1 — the LLM synthesizes across multiple retrieved chunks but doesn't decompose queries. Future: LangGraph-style agentic retrieval loop.
 
 ---
 
 ### Vector Store Design
 
 **Technology:** pgvector (Supabase)
-**Index:** IVFFlat with 100 lists, `ivfflat.probes=10`
+**Index:** HNSW (`m=16, ef_construction=64`)
 **Distance:** Cosine (`vector_cosine_ops`)
+**Dimensions:** 768
 **Multi-tenancy:** `user_id` column + RLS policies
 
 **Rationale:**
 - pgvector in Supabase eliminates a separate vector DB dependency — one less moving part
-- IVFFlat provides approximate nearest-neighbor search with good performance at 10K-1M vectors
-- 100 lists is appropriate for datasets up to ~1M vectors (rule: `sqrt(n_vectors)`)
-- Cosine is preferred over inner product when vector magnitudes vary (they do post-normalization)
+- HNSW provides better recall/speed tradeoff than IVFFlat, especially at low query counts; no training phase required
+- `m=16, ef_construction=64` gives a good balance between index build time and query recall
+- Cosine is preferred over inner product when vector magnitudes vary
 
 **Query performance:**
 - Cold query: ~100-200ms (includes embedding + vector search)
 - Warm query: ~50-100ms (Postgres cache warm)
-- At 1M vectors: consider HNSW index (pgvector 0.5+) for better recall/speed tradeoff
+- At 1M vectors: tune `ef_search` parameter and consider partitioning
 
 **Scaling:**
 - 1K users: current setup handles comfortably
@@ -270,11 +299,12 @@ Layer 1: PostgreSQL RLS (Database)
 
 Layer 2: SQL Function Filter (Vector Search)
   ─ match_chunks(query_embedding, match_user_id, ...)
+  ─ hybrid_search(query_text, query_embedding, match_user_id, ...)
   ─ Explicit WHERE user_id = match_user_id in function body
   ─ Even if RLS is misconfigured, function still filters
 
 Layer 3: API Middleware (Application)
-  ─ proxy.ts validates JWT and extracts user_id
+  ─ middleware.ts validates JWT and extracts user_id
   ─ user_id from JWT is passed to all retrieval functions
   ─ Client cannot supply a different user_id
 ```
@@ -282,7 +312,7 @@ Layer 3: API Middleware (Application)
 **Threat model:**
 - **Injection via query:** User cannot inject SQL through the chat query — it's embedded and passed as a parameter to the RPC function
 - **JWT manipulation:** Supabase validates JWT signatures server-side; user_id is extracted from verified payload
-- **Vector bleeding:** IVFFlat index is shared (performance) but RLS ensures query results are filtered — no chunk returned unless `user_id` matches
+- **Vector bleeding:** HNSW index is shared (performance) but RLS + function-level filtering ensures query results are scoped — no chunk returned unless `user_id` matches
 - **Privilege escalation:** Service role key is server-only (never sent to client); anon key + RLS enforces user isolation
 
 **Verification approach:**
@@ -300,16 +330,17 @@ Layer 3: API Middleware (Application)
 Current context → embed → recommend_chunks() SQL function
   WHERE user_id = auth.uid()
   AND document_id NOT IN (already_cited_doc_ids)
+  AND similarity >= 0.40
   ORDER BY similarity DESC
   LIMIT 3
 ```
 
-**Result:** Grouped by document, returns 3 distinct documents the user hasn't seen yet, ordered by relevance to current topic.
+**Result:** Grouped by document (deduped by `document_id` + title), returns 3 distinct documents the user hasn't seen yet, ordered by relevance to current topic.
 
 **Rationale:**
 - Semantic approach naturally surfaces topically related content regardless of exact phrasing
 - Excluding already-cited docs prevents circular recommendations
-- Grouping by document (not chunk) gives cleaner UX — one recommendation per topic area
+- Over-fetches `count * 2` candidates then deduplicates, ensuring quality even with sparse knowledge bases
 - Future: add metadata signals (difficulty, prerequisites, sequence numbers) for more structured recommendations
 
 ---
@@ -320,14 +351,18 @@ Supports 4 source types:
 
 | Source | Processing |
 |--------|-----------|
-| **Document** (PDF, DOCX, TXT, MD, CSV) | Parse → extract text → semantic chunk → embed → store |
-| **URL** | Fetch → cheerio scrape (no JS rendering) → strip boilerplate → chunk → embed → store |
-| **Image** (PNG, JPG, WebP, GIF) | Upload to Supabase Storage → vision LLM → text description → chunk → embed → store |
+| **Document** (PDF, DOCX, DOC, TXT, MD, CSV) | Parse → extract text → semantic chunk → embed → store |
+| **URL** | Fetch → cheerio scrape → Jina Reader fallback (JS sites) → strip boilerplate → chunk → embed → store |
+| **Image** (PNG, JPG, WebP, GIF) | Upload to Supabase Storage → vision LLM (llava:7b) → text description → chunk → embed → store |
 | **Raw text** | Direct chunk → embed → store |
 
-**Synchronous processing:** Documents are processed inline during the API request (max 60s on Vercel). For large documents (>200 pages), consider breaking into background jobs.
+**Synchronous processing:** Documents are processed inline during the API request. Vercel timeout for `/api/ingest` is 60 seconds.
 
-**Idempotency:** Seed script checks for existing documents by title — won't re-index if already present.
+**Batching:** Embeddings are generated in batches of 5 chunks (rate limit / memory safety); chunks are inserted into the DB in batches of 50 (Supabase 1 MB payload limit).
+
+**Document status flow:** `pending` → `indexing` → `indexed` (or `failed`)
+
+**Idempotency:** Seed script checks for existing embeddings by URL — won't re-index if already present.
 
 ---
 
@@ -339,7 +374,7 @@ Required for both Docker and manual setups. Supabase is an external managed serv
 
 1. Create a free project at [supabase.com](https://supabase.com)
 2. Enable the `pgvector` extension: Dashboard → Database → Extensions → search "vector" → enable
-3. Apply the three migrations **in order**:
+3. Apply all 9 migrations **in order**:
 
 ```bash
 # Option A: Supabase CLI (from the rag-agent/ directory)
@@ -349,6 +384,12 @@ supabase db push
 # supabase/migrations/001_initial_schema.sql
 # supabase/migrations/002_rls_policies.sql
 # supabase/migrations/003_functions.sql
+# supabase/migrations/004_resize_embeddings.sql
+# supabase/migrations/005_fix_thresholds.sql
+# supabase/migrations/006_hnsw_index.sql
+# supabase/migrations/007_keyword_search.sql
+# supabase/migrations/008_agent_config.sql
+# supabase/migrations/009_profile_role.sql
 ```
 
 4. Copy your project credentials into `.env` (or `.env.local` for manual setup):
@@ -371,7 +412,7 @@ docker compose up
 
 What happens on first run:
 - Ollama service starts and passes a health check
-- `llama3.2:3b` (~2 GB) and `all-minilm` (~100 MB) are pulled automatically
+- `llama3.2:3b` (~2 GB) and `nomic-embed-text` (~300 MB) are pulled automatically
 - Demo accounts are seeded in the background (safe to use the app while this runs)
 - App is live at **http://localhost:3000**
 
@@ -397,12 +438,12 @@ For local development without Docker.
 ```bash
 # Pull required Ollama models (skip if using OpenAI)
 ollama pull llama3.2:3b
-ollama pull all-minilm
+ollama pull nomic-embed-text
 ollama pull llava:7b        # Optional: enables image ingestion
 
 # From the rag-agent/ directory
 cp .env.example .env.local
-# Fill in Supabase credentials + set OLLAMA_BASE_URL=http://localhost:11434
+# Fill in Supabase credentials + set LLM_PROVIDER=ollama + OLLAMA_BASE_URL=http://localhost:11434
 
 npm install
 npm run dev                  # Development server at http://localhost:3000
@@ -414,10 +455,12 @@ npm run seed
 ```
 
 This script:
-- Creates `student@demo.com` (Next.js) and `cooking@demo.com` (Cooking for Beginners) via Supabase Auth
-- Fetches Next.js docs URLs and popular posts from r/cookingforbeginners via Reddit's public JSON API
+- Creates `student@demo.com` (Next.js App Router) and `cooking@demo.com` (Cooking for Beginners) via Supabase Auth
+- Fetches ~25 Next.js official documentation pages from nextjs.org/docs/app
+- Fetches popular posts from r/cookingforbeginners via Reddit's public JSON API (top + hot posts with comments)
 - Chunks, embeds, and indexes ~50k tokens of real content per user
-- Is idempotent — reruns skip already-indexed URLs
+- Is idempotent — reruns skip already-indexed URLs (checks for non-null embeddings)
+- Rate-limited: 1.5s between URL scrapes, 1s between Reddit API calls
 
 **Expected time:** 15-30 minutes (network + embedding speed dependent)
 
@@ -436,14 +479,25 @@ RAG_Agent_System/               ← repo root
     ├── src/
     │   ├── app/
     │   │   ├── (app)/
-    │   │   │   ├── chat/       # Chat interface
-    │   │   │   └── admin/      # Admin panel
+    │   │   │   ├── chat/           # Chat interface
+    │   │   │   ├── admin/          # Admin panel
+    │   │   │   └── embed-demo/     # Embedding visualization
     │   │   ├── (auth)/
-    │   │   │   └── login/      # Auth page
+    │   │   │   ├── login/          # Login page
+    │   │   │   └── register/       # Registration page
     │   │   └── api/
-    │   │       ├── chat/       # Streaming RAG endpoint
-    │   │       ├── ingest/     # Document ingestion
-    │   │       └── seed/       # Seeding status check endpoint
+    │   │       ├── chat/           # Streaming RAG endpoint (300s timeout)
+    │   │       ├── ingest/         # Document ingestion (60s timeout)
+    │   │       ├── config/         # User profile configuration
+    │   │       ├── conversations/  # List/create/delete conversations
+    │   │       │   └── [id]/
+    │   │       ├── documents/      # Document management
+    │   │       │   └── [id]/
+    │   │       ├── ollama/         # Local model management
+    │   │       │   ├── models/
+    │   │       │   └── pull/
+    │   │       ├── seed/           # Demo account seeding status
+    │   │       └── debug/search/   # Development: test vector search
     │   ├── components/
     │   │   ├── chat/           # ChatInterface, MessageItem, ChatSidebar
     │   │   ├── admin/          # UploadForm, DocumentTable, ConfigPanel
@@ -452,25 +506,31 @@ RAG_Agent_System/               ← repo root
     │   │   ├── llm/
     │   │   │   └── provider.ts # LLM abstraction (Ollama/OpenAI)
     │   │   ├── rag/
-    │   │   │   ├── chunker.ts  # Semantic boundary chunker
-    │   │   │   └── retriever.ts# Vector search + recommendations
+    │   │   │   ├── chunker.ts  # Semantic boundary chunker (300 tokens, 20 overlap)
+    │   │   │   └── retriever.ts# Hybrid search + recommendations
     │   │   ├── ingest/
     │   │   │   ├── processor.ts        # Ingestion orchestrator
     │   │   │   ├── document-parser.ts  # PDF/DOCX/CSV parsing
-    │   │   │   └── url-scraper.ts      # Web scraping (cheerio)
+    │   │   │   └── url-scraper.ts      # Cheerio + Jina Reader fallback
     │   │   ├── supabase/
     │   │   │   ├── client.ts   # Browser Supabase client
     │   │   │   └── server.ts   # Server Supabase client
     │   │   └── types.ts        # Shared TypeScript interfaces
-    │   └── proxy.ts            # Auth middleware
+    │   └── middleware.ts       # Auth middleware (JWT validation)
     ├── supabase/
     │   └── migrations/
     │       ├── 001_initial_schema.sql  # Tables, indexes, triggers
     │       ├── 002_rls_policies.sql    # Row-Level Security policies
-    │       └── 003_functions.sql       # match_chunks(), recommend_chunks()
+    │       ├── 003_functions.sql       # match_chunks(), recommend_chunks()
+    │       ├── 004_resize_embeddings.sql  # 384-dim → 768-dim for nomic-embed-text
+    │       ├── 005_fix_thresholds.sql  # Lower thresholds (0.5→0.3, 0.6→0.4)
+    │       ├── 006_hnsw_index.sql      # Replace IVFFlat with HNSW
+    │       ├── 007_keyword_search.sql  # Full-text search + hybrid_search()
+    │       ├── 008_agent_config.sql    # Per-tenant agent config fields
+    │       └── 009_profile_role.sql    # Domain/subject role field
     ├── scripts/
-    │   └── seed.ts             # URL-based seeder: scrapes 45 docs, embeds, stores
-    └── vercel.json             # Function timeout config
+    │   └── seed.ts             # URL-based seeder: scrapes docs/reddit, embeds, stores
+    └── vercel.json             # Function timeout config (chat: 300s, ingest: 60s)
 ```
 
 ---
@@ -479,18 +539,18 @@ RAG_Agent_System/               ← repo root
 
 ### Current Limitations
 
-- **No async ingestion:** Large files (>100 pages) may timeout on Vercel's 60s limit
-- **URL scraping:** cheerio can't execute JavaScript — SPAs and dynamic content won't scrape well
+- **No async ingestion:** Large files may timeout on Vercel's 60s limit for `/api/ingest`
+- **URL scraping:** cheerio can't execute JavaScript — Jina Reader fallback handles some JS sites but not all
 - **No conversation persistence across sessions:** Chat history resets on page reload
-- **Single retrieval stage:** No reranking (cross-encoder) for precision improvement
+- **Single retrieval stage:** No cross-encoder reranking for precision improvement
 
 ### What's Next
 
 **Retrieval Quality:**
 - Two-stage retrieval: retrieve 20 → cross-encoder rerank → top 7
-- Hybrid search: pgvector semantic + PostgreSQL full-text search (tsvector/tsquery)
 - Query decomposition for multi-part questions
 - HyDE (Hypothetical Document Embeddings) for better query-document matching
+- Tune hybrid search weights (currently 70/30) per domain
 
 **Infrastructure:**
 - Background job queue (Supabase pg_cron or Inngest) for async ingestion

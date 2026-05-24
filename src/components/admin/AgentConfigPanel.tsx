@@ -34,12 +34,21 @@ const PERSONAS = [
   { value: 'professional', label: 'Professional Consultant', description: 'Formal, concise, business-focused' },
 ]
 
-const PERSONA_PROMPTS: Record<string, string> = {
-  helpful_assistant: 'You are a helpful AI assistant with access to the user\'s knowledge base. Answer questions based on the provided context, cite your sources, and be concise and accurate.',
-  technical_expert: 'You are a technical expert. Provide precise, detailed answers using technical terminology when appropriate. Reference specific implementations and best practices from the knowledge base.',
-  tutor: 'You are a patient tutor helping someone learn. Break down complex concepts into simple terms, use analogies, and provide step-by-step explanations. Encourage curiosity.',
-  casual_friend: 'You are a friendly, approachable assistant. Use conversational language, be warm and helpful. Explain things clearly without being overly formal.',
-  professional: 'You are a professional consultant. Provide concise, actionable insights. Focus on practical recommendations and business value. Be formal and to the point.',
+const PERSONA_PROMPT_TEMPLATES: Record<string, (subject: string) => string> = {
+  helpful_assistant: (s) =>
+    `You are a helpful AI assistant${s ? ` specializing in ${s}` : ''} with access to the user's knowledge base. Answer questions based on the provided context, cite your sources, and be concise and accurate.`,
+  technical_expert: (s) =>
+    `You are a technical expert${s ? ` in ${s}` : ''}. Provide precise, detailed answers using technical terminology when appropriate. Reference specific implementations and best practices from the knowledge base.`,
+  tutor: (s) =>
+    `You are a patient tutor${s ? ` teaching ${s}` : ''} helping someone learn. Break down complex concepts into simple terms, use analogies, and provide step-by-step explanations. Encourage curiosity.`,
+  casual_friend: (s) =>
+    `You are a friendly, approachable assistant${s ? ` knowledgeable about ${s}` : ''}. Use conversational language, be warm and helpful. Explain things clearly without being overly formal.`,
+  professional: (s) =>
+    `You are a professional consultant${s ? ` specializing in ${s}` : ''}. Provide concise, actionable insights. Focus on practical recommendations and business value. Be formal and to the point.`,
+}
+
+function buildPersonaPrompt(persona: string, subject: string): string {
+  return PERSONA_PROMPT_TEMPLATES[persona]?.(subject.trim()) ?? ''
 }
 
 const OLLAMA_MODELS = ['llama3.2:1b', 'llama3.2:3b', 'phi3:3.8b', 'llama3.1:8b', 'mistral:7b', 'gemma2:9b']
@@ -115,6 +124,7 @@ function RangeInput({
 
 export function AgentConfigPanel() {
   const [form, setForm] = useState<ConfigForm>(DEFAULTS)
+  const [subject, setSubject] = useState('')
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [pull, setPull] = useState<PullState>({ status: null, progress: 0, text: '' })
@@ -237,7 +247,15 @@ export function AgentConfigPanel() {
   }
 
   function applyPersona(persona: string) {
-    patch({ agent_persona: persona, system_prompt: PERSONA_PROMPTS[persona] ?? form.system_prompt })
+    const prompt = buildPersonaPrompt(persona, subject)
+    patch({ agent_persona: persona, system_prompt: prompt || form.system_prompt })
+  }
+
+  function handleSubjectChange(value: string) {
+    setSubject(value)
+    if (form.agent_persona && PERSONA_PROMPT_TEMPLATES[form.agent_persona]) {
+      patch({ system_prompt: buildPersonaPrompt(form.agent_persona, value) })
+    }
   }
 
   async function save() {
@@ -332,15 +350,14 @@ export function AgentConfigPanel() {
         {/* ── Persona & Prompt ────────────────────────────── */}
         <TabsContent value="persona" className="mt-4 space-y-5">
           <div className="space-y-1.5">
-            <Label className="text-sm text-slate-300">Domain / Role</Label>
+            <Label className="text-sm text-slate-300">Subject / Domain</Label>
             <p className="text-xs text-slate-500">
-              The subject this agent specialises in — e.g. <em>Finance</em>, <em>Art History</em>, <em>Cooking</em>.
-              Automatically woven into every response.
+              The topic this agent specialises in. Injected into every persona prompt automatically.
             </p>
             <Input
-              value={form.role ?? ''}
-              onChange={e => patch({ role: e.target.value || null })}
-              placeholder="e.g. Personal Finance, Art History, Fitness"
+              placeholder="e.g. cooking, fitness, financial planning…"
+              value={subject}
+              onChange={e => handleSubjectChange(e.target.value)}
               className="bg-slate-800 border-slate-700 text-white placeholder:text-slate-500"
             />
           </div>
