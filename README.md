@@ -13,7 +13,7 @@ The fastest way to run the full stack. Ollama, model pulls, and demo account see
 **Prerequisites:** Docker Desktop running, a Supabase project with migrations applied (see [Database Setup](#database-setup)).
 
 ```bash
-git clone <your-repo-url>
+git clone https://github.com/omerdor001/RAG_Conversational_Agent.git
 cd RAG_Agent_System      # the repo root — docker-compose.yml lives here
 
 cp .env.example .env
